@@ -20,6 +20,14 @@ Review the current diff or the range named by the caller. This is a read-only re
 3. Run `scripts/design_integrity.py` from this skill directory against the repository as a routing aid. Treat its output as risk markers, not findings.
 4. Independently inspect newly added public symbols and alternate entry points even when the scanner reports none.
 
+The scanner compares the current diff with the task baseline. It reports only newly
+added risk markers. A newly added `pass` or default return may sit inside an existing
+`catch`/`except`/`rescue` boundary, so unchanged context lines are used only to locate
+that boundary; context lines themselves are never reported as new findings. Ruby
+`rescue` detection is intentionally limited to high-confidence forms (a rescue clause
+or a clearly shaped modifier such as `expr rescue nil` / `expr rescue {}`), rather than
+matching the word inside ordinary prose or strings.
+
 ## Apply the Gates
 
 For every added catch/except, fallback, retry or compatibility path, duplicate API, or special branch, determine:

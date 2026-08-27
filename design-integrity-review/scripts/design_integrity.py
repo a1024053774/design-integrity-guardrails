@@ -40,13 +40,30 @@ SOURCE_SUFFIXES = {
 }
 TEST_PARTS = {"__tests__", "fixture", "fixtures", "spec", "specs", "test", "tests"}
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-EXCEPTION_RE = re.compile(r"\bcatch\s*(?:\([^)]*\))?\s*\{?|^\s*except(?:\s|:)")
-BROAD_EXCEPTION_RE = re.compile(
-    r"^\s*except\s*(?::|(?:Exception|BaseException)(?:\s+as\s+\w+)?\s*:)",
+EXCEPTION_RE = re.compile(
+    r"(?:^|[;}])\s*catch\b[^{;]*\{"                # catch 子句（含 } catch、单行 try{..}catch、Swift catch let e {），要求同行出现 {
+    r"|^\s*(?:\}\s*)?catch\s*(?:\([^)]*\))?\s*$"   # Allman 风格：catch(...) 或 catch 独占一行，{ 在下一行
+    r"|\.catch\s*\("                               # promise/方法链 .catch(
+    r"|^\s*except\*?(?:\s+[^:]+)?\s*:"             # Python except / except*（3.11 exception groups）
+    r"|^\s*rescue(?:\s+.*)?$"                     # Ruby rescue 子句（独占一行，含 rescue => e / rescue SomeError）
+    r"|^[^#]*\brescue\s+(?:nil|false|true|\{\}|\[\]|[A-Za-z_]\w*(?:\s*\([^)]*\))?)\s*;?(?:\s*#.*)?$"  # Ruby 后缀 rescue：expr rescue nil / {} / fallback
 )
-FALLBACK_RE = re.compile(r"\bfall[\s_-]?back\b|\bfallback\w*", re.IGNORECASE)
+EXCEPTION_BODY_RE = re.compile(
+    r"(?:^|[;}])\s*catch\b[^{;]*\{"                # 带花括号的 catch 子句
+    r"|^\s*(?:\}\s*)?catch\s*(?:\([^)]*\))?\s*$"   # Allman 风格 catch，花括号在下一行
+    r"|^\s*except\*?(?:\s+[^:]+)?\s*:"             # Python except / except*
+    r"|^\s*rescue(?:\s+.*)?$"                     # Ruby 独占一行的 rescue 子句
+)
+BROAD_EXCEPTION_RE = re.compile(
+    r"^\s*except\*?\s*(?::|(?:Exception|BaseException)(?:\s+as\s+\w+)?\s*:)",
+)
+FALLBACK_RE = re.compile(
+    r"\b\w*fall_?back\w*\s*(?:\(|\.|\[|=(?!=))"   # 调用/属性链/下标/赋值/kwarg：fallback(、fallbackClient.、fallback_client =、fallback=True
+    r"|\.\w*fall_?back\w*\b",                     # 属性读取：client.fallback
+    re.IGNORECASE,
+)
 PARALLEL_API_RE = re.compile(
-    r"\b(?:def|function|class|func)\s+"
+    r"\b(?:def|function|class|func|fn|fun)\s+"
     r"[A-Za-z_]\w*(?:_v\d+|_new|_safe|_fallback|_or_default|_compat|_legacy|"
     r"V\d+|New|Safe|WithFallback|OrDefault|Compat|Legacy)\b",
 )
@@ -64,6 +81,14 @@ class AddedLine:
     path: str
     line: int
     text: str
+
+
+@dataclass(frozen=True)
+class DiffLine:
+    path: str
+    line: int
+    text: str
+    added: bool
 
 
 @dataclass(frozen=True)
@@ -90,8 +115,8 @@ class Finding:
         )
 
 
-def parse_unified_diff(diff: str) -> list[AddedLine]:
-    added: list[AddedLine] = []
+def _parse_diff_lines(diff: str) -> list[DiffLine]:
+    parsed: list[DiffLine] = []
     current_path: str | None = None
     new_line: int | None = None
 
@@ -113,16 +138,26 @@ def parse_unified_diff(diff: str) -> list[AddedLine]:
         if current_path is None or new_line is None:
             continue
         if raw_line.startswith("+") and not raw_line.startswith("+++"):
-            added.append(AddedLine(current_path, new_line, raw_line[1:]))
+            parsed.append(DiffLine(current_path, new_line, raw_line[1:], True))
             new_line += 1
         elif raw_line.startswith("-") and not raw_line.startswith("---"):
             continue
         elif raw_line.startswith("\\ No newline"):
             continue
         else:
+            text = raw_line[1:] if raw_line.startswith(" ") else raw_line
+            parsed.append(DiffLine(current_path, new_line, text, False))
             new_line += 1
 
-    return added
+    return parsed
+
+
+def parse_unified_diff(diff: str) -> list[AddedLine]:
+    return [
+        AddedLine(line.path, line.line, line.text)
+        for line in _parse_diff_lines(diff)
+        if line.added
+    ]
 
 
 def is_reviewable_source(path: str) -> bool:
@@ -139,24 +174,52 @@ def is_reviewable_source(path: str) -> bool:
     return posix_path.suffix.lower() in SOURCE_SUFFIXES
 
 
+def _is_comment_line(text: str) -> bool:
+    # C `*ptr = ...` dereference assignments are skipped, matching swallow-scan's `*` prefix rule.
+    stripped = text.strip()
+    return stripped.startswith(("#", "//", "/*", "*"))
+
+
+def _indentation(text: str) -> int:
+    return len(text) - len(text.lstrip())
+
+
 def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
+    return _scan_diff_lines(
+        DiffLine(line.path, line.line, line.text, True) for line in lines
+    )
+
+
+def _scan_diff_lines(lines: Iterable[DiffLine]) -> list[Finding]:
     source_lines = [line for line in lines if is_reviewable_source(line.path)]
+    added_lines = [
+        line
+        for line in source_lines
+        if line.added and not _is_comment_line(line.text)
+    ]
+    context_lines = [
+        line
+        for line in source_lines
+        if not line.added and not _is_comment_line(line.text)
+    ]
     findings: list[Finding] = []
     seen: set[tuple[str, int, str]] = set()
 
-    def add(line: AddedLine, kind: str, text: str | None = None) -> None:
+    def add(line: DiffLine, kind: str, text: str | None = None) -> None:
+        if not line.added:
+            return
         key = (line.path, line.line, kind)
         if key in seen:
             return
         seen.add(key)
         findings.append(Finding(line.path, line.line, kind, text or line.text.strip()))
 
-    exception_lines: list[AddedLine] = []
-    for line in source_lines:
-        stripped = line.text.strip()
+    exception_lines: list[DiffLine] = []
+    for line in added_lines:
         if EXCEPTION_RE.search(line.text):
-            exception_lines.append(line)
             add(line, "exception-boundary")
+        if EXCEPTION_BODY_RE.search(line.text):
+            exception_lines.append(line)
         if BROAD_EXCEPTION_RE.search(line.text):
             add(line, "broad-exception")
         if INLINE_SWALLOW_RE.search(line.text):
@@ -166,7 +229,13 @@ def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
         if PARALLEL_API_RE.search(line.text):
             add(line, "parallel-api-name")
 
-    by_path: dict[str, list[AddedLine]] = {}
+    # Context lines are used only to locate an existing exception boundary around
+    # newly added handling code; they never become findings themselves.
+    for line in context_lines:
+        if EXCEPTION_BODY_RE.search(line.text):
+            exception_lines.append(line)
+
+    by_path: dict[str, list[DiffLine]] = {}
     for line in source_lines:
         by_path.setdefault(line.path, []).append(line)
     for path_lines in by_path.values():
@@ -174,6 +243,8 @@ def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
 
     for boundary in exception_lines:
         saw_substantive_statement = False
+        indentation_block = boundary.path.lower().endswith((".py", ".rb"))
+        boundary_indent = _indentation(boundary.text)
         for candidate in by_path[boundary.path]:
             if candidate.line <= boundary.line:
                 continue
@@ -183,8 +254,17 @@ def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
             if not stripped:
                 continue
             if stripped == "}":
-                if not saw_substantive_statement:
+                if candidate.added and not saw_substantive_statement:
                     add(candidate, "swallowed-exception")
+                break
+            if not candidate.added:
+                if (
+                    indentation_block
+                    and _indentation(candidate.text) <= boundary_indent
+                ):
+                    break
+                continue
+            if indentation_block and _indentation(candidate.text) <= boundary_indent:
                 break
             if stripped == "pass":
                 add(candidate, "swallowed-exception")
@@ -197,7 +277,7 @@ def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
 
 
 def scan_unified_diff(diff: str) -> list[Finding]:
-    return scan_added_lines(parse_unified_diff(diff))
+    return _scan_diff_lines(_parse_diff_lines(diff))
 
 
 def introduced_findings(
@@ -292,7 +372,7 @@ def collect_worktree_diff(
         "diff",
         "--no-ext-diff",
         "--no-color",
-        "--unified=0",
+        "--unified=5",
         comparison_base,
         "--",
     ).stdout.decode("utf-8", errors="replace")

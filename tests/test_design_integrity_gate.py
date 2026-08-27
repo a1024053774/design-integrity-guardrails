@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -156,6 +158,41 @@ class HookGateTests(unittest.TestCase):
         self.assertEqual("block", result["decision"])
         self.assertIn("$design-integrity-review", result["reason"])
         self.assertIn("service.py", result["reason"])
+
+    def test_blocks_when_existing_exception_handler_gains_default_return(self) -> None:
+        self._write(
+            "service.py",
+            "def load():\n"
+            "    try:\n"
+            "        return fetch()\n"
+            "    except Exception:\n"
+            "        raise\n",
+        )
+        self._git("add", "service.py")
+        self._git("commit", "-qm", "add existing handler")
+
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n"
+            "    try:\n"
+            "        return fetch()\n"
+            "    except Exception:\n"
+            "        return None\n",
+        )
+
+        result = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertEqual("block", result["decision"])
+        self.assertIn("default-after-catch", result["reason"])
 
     def test_does_not_blame_preexisting_dirty_fallback(self) -> None:
         self._write(
@@ -386,6 +423,244 @@ class HookGateTests(unittest.TestCase):
         result = handle_event(event, agent="codex", state_dir=self.state_dir)
 
         self.assertEqual("block", result["decision"])
+
+    def test_stale_state_files_are_collected_on_cold_pre_tool_use(self) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        stale_json = self.state_dir / "stale.json"
+        stale_lock = self.state_dir / "stale.lock"
+        fresh_json = self.state_dir / "fresh.json"
+        fresh_lock = self.state_dir / "fresh.lock"
+        for path in (stale_json, stale_lock, fresh_json, fresh_lock):
+            path.write_text("{}", encoding="utf-8")
+        stale_mtime = time.time() - 49 * 60 * 60
+        os.utime(stale_json, (stale_mtime, stale_mtime))
+        os.utime(stale_lock, (stale_mtime, stale_mtime))
+
+        result = handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertIsNone(result)
+        self.assertFalse(stale_json.exists())
+        self.assertFalse(stale_lock.exists())
+        self.assertTrue(fresh_json.exists())
+        self.assertTrue(fresh_lock.exists())
+        baseline = [
+            path for path in self.state_dir.glob("*.json") if path.name != "fresh.json"
+        ]
+        self.assertEqual(1, len(baseline))
+        payload = json.loads(baseline[0].read_text(encoding="utf-8"))
+        self.assertIn("findings", payload)
+        self.assertIn("base_revision", payload)
+
+    def test_held_lock_is_not_collected_on_long_lived_session_cold_start(self) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = integrity_hook._state_path(
+            self.state_dir, "session-1", self.repo
+        ).with_suffix(".lock")
+        lock_path.write_text("", encoding="utf-8")
+        stale_mtime = time.time() - 49 * 60 * 60
+        os.utime(lock_path, (stale_mtime, stale_mtime))
+
+        result = handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(lock_path.exists())
+        state_path = lock_path.with_suffix(".json")
+        self.assertTrue(state_path.exists())
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertIn("findings", payload)
+        self.assertIn("base_revision", payload)
+
+
+class ScannerPrecisionTests(unittest.TestCase):
+    def _diff(self, path: str, *added: str) -> str:
+        return "\n".join(
+            [
+                f"diff --git a/{path} b/{path}",
+                f"--- a/{path}",
+                f"+++ b/{path}",
+                f"@@ -1,0 +1,{len(added)} @@",
+                *(f"+{line}" for line in added),
+            ]
+        )
+
+    def test_comments_and_strings_are_not_flagged(self) -> None:
+        diff = "\n".join(
+            [
+                self._diff("src/guard.ts", "// catch this early; no fallback needed"),
+                self._diff("cache.py", "# we fall back to cache here"),
+                self._diff("src/log.ts", 'logger.info("no fallback needed")'),
+            ]
+        )
+
+        self.assertEqual([], scan_unified_diff(diff))
+
+    def test_catch_prefix_identifiers_are_not_exception_boundaries(self) -> None:
+        diff = self._diff(
+            "src/names.ts",
+            "const catchyName = 1;",
+            "catchError(x);",
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertNotIn("exception-boundary", kinds)
+
+    def test_real_exception_boundaries_are_flagged(self) -> None:
+        cases = (
+            ("src/client.ts", "} catch (err) {"),
+            ("src/promise.ts", "promise.catch(handleError)"),
+            ("src/Handler.swift", "catch let error {"),
+            ("src/Handler.cs", "catch (Exception e)"),
+            ("service.py", "except ValueError:"),
+            ("groups.py", "except* ValueError:"),
+            ("loader.rb", "rescue => e"),
+            ("loader.rb", "data = JSON.parse(raw) rescue {}"),
+        )
+        for path, line in cases:
+            with self.subTest(path=path, line=line):
+                kinds = {finding.kind for finding in scan_unified_diff(self._diff(path, line))}
+                self.assertIn("exception-boundary", kinds)
+
+    def test_existing_exception_boundary_with_new_default_return_is_flagged(self) -> None:
+        diff = "\n".join(
+            [
+                "diff --git a/service.py b/service.py",
+                "--- a/service.py",
+                "+++ b/service.py",
+                "@@ -1,5 +1,5 @@",
+                " def load():",
+                "     try:",
+                "         return fetch()",
+                "     except Exception:",
+                "-        raise",
+                "+        return None",
+            ]
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertIn("default-after-catch", kinds)
+
+    def test_promise_catch_call_does_not_capture_following_default_return(self) -> None:
+        diff = self._diff(
+            "src/promise.ts",
+            "promise.catch(handleError);",
+            "return null;",
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertIn("exception-boundary", kinds)
+        self.assertNotIn("default-after-catch", kinds)
+
+    def test_existing_exception_boundary_with_new_pass_is_flagged(self) -> None:
+        diff = "\n".join(
+            [
+                "diff --git a/service.py b/service.py",
+                "--- a/service.py",
+                "+++ b/service.py",
+                "@@ -1,5 +1,5 @@",
+                " def load():",
+                "     try:",
+                "         return fetch()",
+                "     except Exception:",
+                "-        raise",
+                "+        pass",
+            ]
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertIn("swallowed-exception", kinds)
+
+    def test_existing_braced_exception_boundary_does_not_capture_code_after_close(self) -> None:
+        diff = "\n".join(
+            [
+                "diff --git a/src/service.ts b/src/service.ts",
+                "--- a/src/service.ts",
+                "+++ b/src/service.ts",
+                "@@ -1,7 +1,8 @@",
+                " function load() {",
+                "   try {",
+                "     return fetch();",
+                "   } catch (error) {",
+                "     throw error;",
+                "   }",
+                "+  return null;",
+                " }",
+            ]
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertNotIn("default-after-catch", kinds)
+        self.assertNotIn("swallowed-exception", kinds)
+
+    def test_existing_indented_exception_boundary_does_not_capture_code_after_dedent(self) -> None:
+        diff = "\n".join(
+            [
+                "diff --git a/service.py b/service.py",
+                "--- a/service.py",
+                "+++ b/service.py",
+                "@@ -1,7 +1,8 @@",
+                " def load():",
+                "     try:",
+                "         return fetch()",
+                "     except Exception:",
+                "         raise",
+                "+    return None",
+                "",
+                " def other():",
+            ]
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertNotIn("default-after-catch", kinds)
+        self.assertNotIn("swallowed-exception", kinds)
+
+    def test_ruby_rescue_in_plain_string_is_not_flagged(self) -> None:
+        diff = self._diff("loader.rb", 'text = " value rescue later"')
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertNotIn("exception-boundary", kinds)
+
+    def test_real_fallback_code_forms_are_flagged(self) -> None:
+        cases = (
+            ("client.py", "fallback_client = make()"),
+            ("src/load.ts", "return fallbackClient.load()"),
+            ("flags.py", "load(fallback=True)"),
+            ("src/read.ts", "return client.fallback"),
+        )
+        for path, line in cases:
+            with self.subTest(path=path, line=line):
+                kinds = {finding.kind for finding in scan_unified_diff(self._diff(path, line))}
+                self.assertIn("fallback-marker", kinds)
+
+    def test_value_position_fallback_is_deliberately_not_flagged(self) -> None:
+        # Explicit contract: value-position recall yields to prose false-positive suppression; semantic review covers the rest.
+        diff = "\n".join(
+            [
+                self._diff("src/nullish.ts", "return cached ?? fallbackValue;"),
+                self._diff("src/arg.ts", "use(fallbackClient)"),
+                self._diff("src/key.ts", "{ fallback: loadBackup }"),
+            ]
+        )
+
+        kinds = {finding.kind for finding in scan_unified_diff(diff)}
+        self.assertNotIn("fallback-marker", kinds)
+
+    def test_parallel_api_covers_fn_and_fun(self) -> None:
+        cases = (
+            ("src/load.rs", "fn load_v2() {"),
+            ("src/User.kt", "fun loadUserV2() {"),
+        )
+        for path, line in cases:
+            with self.subTest(path=path, line=line):
+                kinds = {finding.kind for finding in scan_unified_diff(self._diff(path, line))}
+                self.assertIn("parallel-api-name", kinds)
 
 
 if __name__ == "__main__":

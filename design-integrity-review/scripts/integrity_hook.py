@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from design_integrity import (
 
 
 DEFAULT_STATE_DIR = Path(tempfile.gettempdir()) / "design-integrity-review"
+STATE_TTL_SECONDS = 48 * 60 * 60
 
 
 def _state_path(state_dir: Path, session_id: str, cwd: Path) -> Path:
@@ -64,12 +66,33 @@ def _remove_state(path: Path) -> None:
         pass
 
 
+def _collect_garbage(state_dir: Path) -> None:
+    """Delete state files whose mtime is older than STATE_TTL_SECONDS.
+
+    The normal Stop path does not unlink the sibling .lock: unlinking a file
+    another process may already be flock-waiting on would create two inodes and
+    two lock domains, breaking mutual exclusion. Collecting after 48h is safe
+    because every successful lock acquisition refreshes the lock file mtime, so
+    an mtime older than the TTL means no process acquired that lock within 48
+    hours (the hook timeout is 10 seconds); there is neither an active holder
+    nor a waiter.
+    """
+    cutoff = time.time() - STATE_TTL_SECONDS
+    for path in (*state_dir.glob("*.json"), *state_dir.glob("*.lock")):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+
+
 @contextmanager
 def _state_lock(state_path: Path):
     state_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = state_path.with_suffix(".lock")
     with lock_path.open("a+b") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        os.utime(lock_path)
         try:
             yield
         finally:
@@ -128,6 +151,7 @@ def handle_event(
         with _state_lock(state_path):
             if state_path.exists():
                 return None
+            _collect_garbage(state_dir)
             root, base_revision = resolve_base_revision(cwd)
             if root is not None and base_revision is not None:
                 _, findings = scan_worktree(cwd, base_revision)
