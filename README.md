@@ -45,9 +45,29 @@ skill 可能没有触发，同上下文自审也容易产生动机性推理。
 
 - `AGENTS.md`：可作为全局或项目级工程约定。
 - `SKILL.md`：独立上下文的证据化复审流程。
-- `design_integrity.py`：扫描 Git diff 中新增的风险结构。
-- `integrity_hook.py`：记录任务基线，并在结束时要求复审本轮新增风险。
+- `design_integrity.py`：扫描 Git diff 中新增的风险结构，并输出供复审使用的风险标记。
+- `integrity_hook.py`：记录任务基线，在结束时比较本轮新增风险标记，并要求进行复审。
 - 测试覆盖脏工作区、提交后隐藏改动、首次提交和并行工具调用等边界。
+
+## 扫描哪些风险结构
+
+`design_integrity.py` 是一个正则驱动的路由器，不是 AST linter。它只扫描可识别的
+源文件 Git diff，并且只把新增行报告为风险标记；未改变的上下文只用于定位已有的
+异常边界。当前标记包括：
+
+| 标记 | 识别的结构 | 目的 |
+| --- | --- | --- |
+| `exception-boundary` | 带 body 的 `catch`、Python `except`/`except*`、Ruby `rescue`，以及 Promise `.catch(...)` 调用 | 要求复审错误处理是否有真实输入、调用方和恢复所有权 |
+| `broad-exception` | Python `except:`、`except Exception`、`except BaseException`，也覆盖 `except*` 变体 | 防止用过宽异常范围隐藏根因 |
+| `swallowed-exception` | 空 `catch`、内联 `except: pass`，或在已有异常边界中新增 `pass` | 防止异常被静默吞掉 |
+| `default-after-catch` | 异常处理体中新增 `return None`、`null`、`nil`、布尔值、`0`、空字符串、空数组或空对象 | 防止用无证据的默认值掩盖失败 |
+| `fallback-marker` | 代码形态中的 `fallback` 标识符：调用、属性、下标、赋值或关键字参数 | 复审是否存在没有契约依据的降级路径 |
+| `parallel-api-name` | `def`、`function`、`class`、`func`、Rust `fn`、Kotlin `fun` 声明中带有 `V2`、`New`、`Safe`、`Compat`、`Legacy` 等旁路命名 | 防止为避免修改正确抽象而新增重复公共 API |
+
+这些标记只是“需要看一眼”的路由信号，不等于代码一定错误。有真实契约、可达失败
+和正确职责归属的异常处理或 fallback 可以保留。反过来，重试、任意特殊分支、无
+关键字的方法重命名等不一定会被 scanner 命中，仍由 `design-integrity-review` 的
+语义复审负责。
 
 ## 工作方式
 
@@ -81,10 +101,27 @@ Stop hook 比较“基线 tree → 当前 HEAD + 当前工作区”
 
 ## 环境要求
 
-- macOS 或 Linux；hook 使用 POSIX `fcntl.flock`。
+### Scanner
+
+- macOS、Linux 或 Windows。
 - Python 3.10 或更高版本。
 - Git 工作区。
+
+只运行 `design_integrity.py` 时，Windows 原生环境可以使用 Python 和 Git；例如：
+
+```powershell
+py -3 design-integrity-review/scripts/design_integrity.py --cwd . --format text
+```
+
+### Lifecycle hook
+
 - Codex CLI/Desktop 或 Claude Code。
+- macOS 或 Linux；当前 hook 使用 POSIX `fcntl.flock`，Windows 原生环境暂不支持。
+
+Windows 用户如果需要完整的 `PreToolUse`/`Stop` 门禁，请在 WSL2 或 Linux CI 中运行
+hook；也可以在 Windows 原生环境只运行 scanner，待后续加入 Windows 文件锁实现后再
+接入生命周期 hook。不要直接把当前 `integrity_hook.py` 配置到 Windows 原生 Python，
+因为模块导入阶段就会依赖不可用的 `fcntl`。
 
 ## 安装
 
@@ -219,7 +256,7 @@ python3 -m unittest tests/test_design_integrity_gate.py
 - 扫描器是正则驱动的风险路由器，不是 AST linter，也不直接判定代码错误。
 - fresh-context 复审仍需要模型进行语义判断；hook 会显式中断一次完成流程并要求
   进入复审，但不替代人的最终判断。
-- 当前 hook 使用 POSIX 文件锁，Windows 尚未支持。
+- 生命周期 hook 使用 POSIX 文件锁，Windows 原生尚未支持；Windows 可单独运行 scanner。
 - 本仓库不会因为看到 `catch` 或 `fallback` 就要求删除它；有真实契约和恢复所有权
   的路径应当保留。
 - 正则只匹配高置信度代码形态；行首 `*` 的解引用赋值会被当作注释跳过。
