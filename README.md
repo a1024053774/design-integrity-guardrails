@@ -224,3 +224,7 @@ python3 -m unittest tests/test_design_integrity_gate.py
 没有被调用。hook 把风险结构变成每个任务真实面对的完成条件，而独立上下文复审负责
 避免实现者为自己的方案补理由。三层结合后，目标从“让测试变绿”变成“用证据证明这条
 生产路径确实必要”。
+
+## License
+
+本项目采用 [MIT License](LICENSE)，Copyright © 2026 LuckyE。
