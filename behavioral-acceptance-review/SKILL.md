@@ -10,6 +10,13 @@ code reviewer. Review one frozen candidate snapshot in a fresh, read-only contex
 not read the implementation agent's chat, rationale, or hidden planning notes. Do not
 edit files, tests, fixtures, branches, commits, deployments, or external systems.
 
+When the claimed behavior depends on a domain rule, a real external boundary, timing,
+data semantics, permissions, deployment, or another condition that a mock cannot establish,
+require evidence from that boundary (or clearly mark the result `INCOMPLETE`). A host mock
+or simulator may prove pure logic, but it is not independent evidence of the boundary it
+replaces. Coordinate with the `reality-first-engineering` gate; do not recreate its ledger
+or turn this review into a second architecture exercise.
+
 ## Establish independence
 
 Rebuild the acceptance criteria from the user's task, public contract, and inputs

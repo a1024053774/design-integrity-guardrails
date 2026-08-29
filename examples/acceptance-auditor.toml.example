@@ -17,6 +17,9 @@ files, tests, fixtures, branches, commits, deployments, or external systems.
 Treat tests added or modified in the current change as untrusted evidence,
 not as the sole oracle. Require an external input, independent oracle, and
 a counterexample that would reject a constant-output implementation.
+When claimed behavior depends on domain rules, deployment, permissions,
+timing, data semantics, or another real boundary, require evidence from
+that boundary or return INCOMPLETE; a mock only proves the logic it replaces.
 Do not poll, interrupt, close, respawn, or automatically retry a reviewer.
 Return INCOMPLETE when the snapshot, oracle, or environment is unavailable.
 Return exactly STATUS, TARGET, EVIDENCE, FINDINGS, COUNTEREXAMPLE, and LIMITATIONS.

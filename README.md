@@ -1,14 +1,15 @@
-# Design Integrity Guardrails
+# Reality-First & Design Integrity Guardrails
 
 面向 Codex、Claude Code 及其他兼容 Agent Skills 的工程完整性约束：一份常驻
-`AGENTS.md`、一个聚焦结构风险的 design review skill、一个测试/验收完整性 skill，
-以及在任务结束前触发路由的确定性 hook。
+`AGENTS.md`、一个实现前的 reality gate、一个聚焦结构风险的 design review skill、
+一个测试/验收完整性 skill，以及在任务结束前触发路由的确定性 hook。
 
 ## 解决什么问题
 
 编码 Agent 很容易把“当前测试通过”优化成唯一目标，进而选择短期最容易交付、
 长期最难维护的实现：
 
+- 在事实不完整时高速补齐一套完整方案，把未经验证的领域、外部或部署假设焊进架构；
 - 用宽泛 `try/catch`、`except Exception`、空 catch 或默认返回值隐藏失败；
 - 为了不修改正确的接口，新增 `V2`、`Safe`、`Compat` 等旁路 API；
 - 到处添加没有真实产品契约的 fallback、重试或兼容分支；
@@ -19,24 +20,69 @@
 成本。单纯继续往提示词里追加“请注意代码质量”通常不够，因为规则可能被忽略，
 skill 可能没有触发，同上下文自审也容易产生动机性推理。
 
-本仓库把约束分成四个互补部分：
+本仓库把约束分成五个互补部分：
 
 1. **常驻规则**：`AGENTS.md` 定义根因范围、举证责任、比例原则和合法停止出口。
-2. **确定性路由**：hook 对本轮新增的异常处理、fallback、疑似旁路 API 和显式验收
+2. **现实门**：`reality-first-engineering` 在架构或大范围实现前区分事实与推断，
+   为会改变架构的未知绑定最小可证伪实验。
+3. **确定性路由**：hook 对本轮新增的异常处理、fallback、疑似旁路 API 和显式验收
    表面做风险标记。
-3. **结构复审**：`design-integrity-review` 在冻结候选版本上检查真实调用方、错误
+4. **结构复审**：`design-integrity-review` 在冻结候选版本上检查真实调用方、错误
    所有权、架构职责和更简单的修正方式。
-4. **行为验收**：`behavioral-acceptance-review` 检查测试、eval、benchmark、
+5. **行为验收**：`behavioral-acceptance-review` 检查测试、eval、benchmark、
    autoresearch 和生成结果是否有独立输入与 oracle。
 
 扫描命中只是要求复审，不等于代码有错。真正的 finding 必须有可达输入、调用路径、
 具体故障或维护成本，以及更简单的修正方案。
+
+## Reality-first engineering：先确认世界，再工程化方向
+
+这条流程针对的不是“AI 太能干”本身，而是**事实不完整时仍然高速完成一套自洽
+方案**。人的测试和纠偏速度较低，方向只偏一点，Agent 就可能把错误假设扩展成
+代码、服务、测试和文档。Reality Gate 要求在架构之前公开：
+
+- `observed`：直接看到或用户明确提供的事实；
+- `measured`：有方法、环境、时间和位置的测量结果；
+- `inferred`：由事实推导出的判断，不能伪装成测量；
+- `unknown`：尚未知道、且可能改变决策的事实。
+
+每个架构关键未知都绑定一个最小实验、通过/失败条件、停止条件和证据位置。无法
+测量时可以诚实地返回 `BLOCKED`/`INCOMPLETE`；这在本流程里是合法的成功结局，
+不是用 fallback、兼容 API 或 mock-only 分支绕过现实的理由。一个架构决策批次只
+运行一次 Reality Gate；多次编辑不重复开门，只有新证据推翻假设才重开。
+
+### 与 project-to-act 的边界
+
+`project-to-act` 继续拥有一个且仅一个持久事实源。Reality skill 不创建
+`REALITY.md`、第二套计划或并行状态文件：
+
+| 现实信息 | 写入已有账本 |
+| --- | --- |
+| 约束、observed/measured/inferred/unknown 事实 | `PROJECT_OVERVIEW.md` |
+| 实验、阻塞、负责人和下一步 | `PROJECT_PROGRESS.md` |
+| 由证据导致的架构/版本路线 | `PROJECT_VERSIONS.md` |
+| 实验结果、证据有效期、Reality Gate | `PROJECT_ACCEPTANCE.md` |
+
+如果项目使用 external-ledger，只写配置指定的 canonical ledger。未配置的一次性
+任务不因加载 skill 自动初始化项目管理；长期项目走 `project-to-act` 的显式初始化
+或采用流程。
+
+### 文档数量不是严谨度
+
+人需要一个当前、可读的总结；Agent 需要可追溯的测量和决定历史。两者都应落在
+同一 canonical ledger：摘要只保留当前约束、决定、阻塞和下一步，详细条目带来源、
+状态、证据 ID 和最后验证时间。派生文档可以临时生成，但不能凌驾于代码、实测事实
+或 canonical ledger；发现重复或过时内容时应合并，而不是继续新增 Markdown。
 
 ## 仓库内容
 
 ```text
 .
 ├── AGENTS.md
+├── reality-first-engineering/
+│   ├── SKILL.md
+│   ├── agents/openai.yaml
+│   └── scripts/reality_prompt_hook.py
 ├── design-integrity-review/
 │   ├── SKILL.md
 │   └── scripts/
@@ -51,6 +97,10 @@ skill 可能没有触发，同上下文自审也容易产生动机性推理。
 ```
 
 - `AGENTS.md`：可作为全局或项目级工程约定。
+- `reality-first-engineering/SKILL.md`：实现前的现实事实、关键未知、最小实验和
+  架构门；与 `project-to-act` 共用唯一账本。
+- `reality_prompt_hook.py`：按用户提示中的高影响决策/事实缺口注入轻量提醒；不读
+  Git、不写账本、不启动 reviewer。
 - `design-integrity-review/SKILL.md`：一次性、结构范围受限的独立复审和验收路由。
 - `behavioral-acceptance-review/SKILL.md`：测试与行为验收的独立性检查单。
 - `design_integrity.py`：扫描 Git diff 中新增的风险结构，并输出供复审使用的风险标记。
@@ -89,16 +139,24 @@ reviewer。其他用户可观察行为可以显式调用该 skill。
 ## 工作方式
 
 ```text
-首个可能修改代码的工具调用
+任务进入
+        │
+        ▼
+是否存在会改变架构的现实/外部未知？
+        ├── 否 ───────────────┐
+        │                     │
+        └── 是                 │
+              ▼               │
+       Reality Gate            │
+       brief + 最小实验         │
+        ├── BLOCKED/INCOMPLETE ─► 停止并报告证据缺口
+        └── PASS ──────────────┘
         │
         ▼
 记录 Git 基线 revision + 已存在风险标记
         │
         ▼
 Agent 编辑、测试，甚至在授权后提交
-        │
-        ▼
-Stop hook 比较“基线 tree → 当前 HEAD + 当前工作区”
         │
         ├── 没有新增风险标记 ──► 正常结束
         │
@@ -135,6 +193,13 @@ hook 使用宿主提供的 `turn_id` 作为回答边界：已确认的批次在�
 AGENTS.md / CLAUDE.md
         │
         ▼
+实现前现实门
+reality-first-engineering
+        │
+        ├── 唯一账本：project-to-act
+        │     └── 事实 / 实验 / 决定 / 验收
+        │
+        ▼
 确定性扫描与生命周期状态
 design_integrity.py → integrity_hook.py
         │
@@ -154,6 +219,8 @@ design-integrity-review
 ~~~
 
 - `AGENTS.md` 只负责价值排序、举证责任、比例原则和“正确修复超出范围时停下上报”。
+- `reality-first-engineering` 只负责实现前的事实分类、关键未知和可证伪实验；它不
+  维护第二套项目计划，也不替代现实或领域验收。
 - `design_integrity.py` 只做风险结构识别和验收路径分类，不把命中直接判成缺陷。
 - `integrity_hook.py` 记录 Git 基线，按 `turn_id` 管理 review epoch，并把同一回答里的
   多次编辑合并为一个候选版本。
@@ -166,6 +233,9 @@ design-integrity-review
 
 这套结构仍然需要项目自己的黑盒 harness、CI 或真实入口测试。reviewer 负责审查证据
 是否可信，不负责凭空创造 oracle，也不替代领域验收。
+
+Reality Gate 也不能凭空创造外部证据：运行环境、时序、权限、数据语义或部署事实必须
+由真实测量、用户提供的约束或明确标记的未知来支撑。
 
 在本次实例里，被验收应用本身也保持单一权威路径：统筹 Agent、管理后台和受控客服
 测试共用同一个 FastAPI、SQLite、租户和领域服务；持久会话是唯一会话语义，旧入口只
@@ -190,12 +260,14 @@ py -3 design-integrity-review/scripts/design_integrity.py --cwd . --format text
 ### Lifecycle hook
 
 - Codex CLI/Desktop 或 Claude Code。
-- macOS 或 Linux；当前 hook 使用 POSIX `fcntl.flock`，Windows 原生环境暂不支持。
+- macOS、Linux 或 Windows。`integrity_hook.py` 在 POSIX 使用 `fcntl`，在 Windows 使用
+  `msvcrt`，两者都对同一个 state lock 做互斥。
 
-Windows 用户如果需要完整的 `PreToolUse`/`Stop` 门禁，请在 WSL2 或 Linux CI 中运行
-hook；也可以在 Windows 原生环境只运行 scanner，待后续加入 Windows 文件锁实现后再
-接入生命周期 hook。不要直接把当前 `integrity_hook.py` 配置到 Windows 原生 Python，
-因为模块导入阶段就会依赖不可用的 `fcntl`。
+`reality_prompt_hook.py` 只使用 Python 标准库，在 Windows、macOS 和 Linux 都可以运行；
+它是提示注入而不是阻断式门禁。
+
+Windows 没有符号链接权限时，可以把三个 skill 目录复制到对应的用户 skill 目录；
+hook 命令把 `python3` 换成 `py -3`，其余输入格式不变。
 
 ## 安装
 
@@ -212,6 +284,7 @@ cd design-integrity-guardrails
 
 ```bash
 mkdir -p ~/.agents/skills
+ln -s "$PWD/reality-first-engineering" ~/.agents/skills/reality-first-engineering
 ln -s "$PWD/design-integrity-review" ~/.agents/skills/design-integrity-review
 ln -s "$PWD/behavioral-acceptance-review" ~/.agents/skills/behavioral-acceptance-review
 ```
@@ -255,12 +328,28 @@ ln -s "$PWD/behavioral-acceptance-review" ~/.agents/skills/behavioral-acceptance
 逐条检查并信任新命令。Codex hook 格式见
 [OpenAI Docs: Hooks](https://learn.chatgpt.com/docs/hooks)。
 
+在同一个 `hooks` 对象的 `UserPromptSubmit` 数组中追加轻量前置提醒：
+
+```json
+{
+  "hooks": [
+    {
+      "type": "command",
+      "command": "python3 /absolute/path/to/repo/reality-first-engineering/scripts/reality_prompt_hook.py",
+      "additionalContextLimit": 300,
+      "timeout": 2
+    }
+  ]
+}
+```
+
 ### Claude Code
 
 链接 skill：
 
 ```bash
 mkdir -p ~/.claude/skills
+ln -s "$PWD/reality-first-engineering" ~/.claude/skills/reality-first-engineering
 ln -s "$PWD/design-integrity-review" ~/.claude/skills/design-integrity-review
 ln -s "$PWD/behavioral-acceptance-review" ~/.claude/skills/behavioral-acceptance-review
 ```
@@ -309,6 +398,9 @@ ln -s "$PWD/AGENTS.md" ~/.claude/CLAUDE.md
 - [Hooks](https://code.claude.com/docs/en/hooks-guide)
 - [CLAUDE.md](https://code.claude.com/docs/en/memory)
 
+在同一个 `hooks` 对象的 `UserPromptSubmit` 数组中追加同样的命令片段；它只在高影响
+决策或事实缺口出现时注入提醒，不会启动子 Agent。
+
 ### Acceptance auditor（Codex）
 
 验收 skill 使用一个职责型自定义 Agent，而不是把模型名称写进流程：
@@ -325,6 +417,18 @@ sandbox_mode = "read-only"
 API 地址或凭据提交到仓库。主 Agent 在冻结候选版本后委派一次该角色；hook 本身只负责
 提示和去重，不直接启动模型。
 
+### Reality Gate 的实际触发
+
+它由常驻 `AGENTS.md`/`CLAUDE.md` 在实现前按任务条件路由，而不是由 Stop hook 在
+代码已经写完后才补救。以下情况默认先调用 `$reality-first-engineering`：需求、领域
+规则或验收条件不完整；未验证的部署、外部 API、数据语义、权限、性能/时序、迁移或
+成本约束；以及可能让固定样例、硬编码输出或自带
+答案的 harness “通过”的测试/生成任务。普通已知契约的小改动不触发。
+
+Reality skill 不自动启动 reviewer，也不和 `design-integrity-review` 竞争预算。一次
+架构决策批次只建立一个 brief；通过后才实现，完成时再由现有 hook 按新增风险路由
+一次结构或行为复审。
+
 ## 复审判据
 
 对每个新增 catch/except、fallback、兼容路径、重复 API 或特殊分支，复审者需要回答：
@@ -339,8 +443,11 @@ API 地址或凭据提交到仓库。主 Agent 在冻结候选版本后委派一
 ## 运行测试
 
 ```bash
-python3 -m unittest tests/test_design_integrity_gate.py
+python3 -m unittest discover -s tests
 ```
+
+当前仓库测试覆盖生命周期门禁、跨平台锁后端和 Reality 提示路由；本版本本地验证为
+`44` 项通过。
 
 ## 已知边界
 
@@ -355,7 +462,8 @@ python3 -m unittest tests/test_design_integrity_gate.py
   和项目自己的确定性测试覆盖。
 - reviewer 必须在稳定的 commit、patch 或只读 worktree 上运行；实现者在复审期间
   不应继续编辑、提交或部署。
-- 生命周期 hook 使用 POSIX 文件锁，Windows 原生尚未支持；Windows 可单独运行 scanner。
+- 生命周期 hook 在 macOS/Linux 使用 `fcntl`、Windows 使用 `msvcrt`；两端都需要 Python
+  和 Git。
 - 本仓库不会因为看到 `catch` 或 `fallback` 就要求删除它；有真实契约和恢复所有权
   的路径应当保留。
 - 正则只匹配高置信度代码形态；行首 `*` 的解引用赋值会被当作注释跳过。
@@ -369,6 +477,33 @@ python3 -m unittest tests/test_design_integrity_gate.py
 - Ruby `rescue` 只接受高置信度形式；非标准 DSL 或跨多行的 rescue 写法可能需要
   语义复审补充判断。
 - hook 的 state 文件超过 48 小时会自动清理。
+
+## 历史案例（仅用于说明，不定义触发范围）：厕所坑位监测系统
+
+以下是根据用户提供的视频文字稿整理的案例，不把文字稿当作本仓库的测试证据；它用来
+说明 Reality Gate 为什么要放在架构之前。
+
+最初的方案让 ESP32 节点长期连接 Wi‑Fi。后来才确认：节点没有固定电源、依赖 18650
+电池、板载天线弱，厕所内信号也不稳定。常连 Wi‑Fi 先带来耗电和发热；改成 deep
+sleep 后，每次唤醒又要冷启动、重新认证和重新连接，实际上让上报变成低概率事件。
+Agent 可以继续改代码、重烧录和检查接线，却无法靠更多局部修补消除错误的系统边界。
+
+真正改变结果的是重新验证架构假设：坑位节点改用 ESP-NOW，厕所外增加稳定供电、
+增强天线的 ESP32 网关，由网关常连 Wi‑Fi 并向后端上报。这里的关键不是某个 API，
+而是先测量供电、连接、唤醒时序和部署位置，再决定通信拓扑。
+
+这个案例对应的 Reality Brief 应至少留下：
+
+1. **现实约束**：电池容量、可用电源、信号范围、天线位置、唤醒/上报时间；
+2. **未知与实验**：在真实厕所位置测量连接成功率、耗电和重连时间，并写出失败阈值；
+3. **架构决定**：节点、网关和后端的职责边界，以及为什么不把 Wi‑Fi 直连当默认；
+4. **停止条件**：关键测量未完成时不批量生产固件、不扩展后端功能、不用 fallback
+   把低概率上报伪装成成功。
+
+文字稿还提到项目产生约 17 份、约 2900 行 Markdown，部分重复或落后于代码，且核心
+逻辑和硬件层焊死。流程对此的处理不是禁止文档，而是分层：人看一个当前总结，Agent
+看 canonical ledger 中带证据和验证时间的详细记录；纯逻辑抽出到可在主机测试的边界，
+硬件层保留真实 smoke/soak 证据。
 
 ## 实测案例：yunpai-ecommerce-agent-pr9
 
@@ -448,11 +583,11 @@ CSS 滚动修复只改变布局和对应回归，因此没有把此前的 `1511 
 
 ## 为什么不是只写 AGENTS.md
 
-常驻规则负责价值排序，但不能保证每次都被执行。skill 提供完整复审方法，但仍可能
-没有被调用。hook 把风险结构变成每个任务真实面对的完成条件；`design-integrity-review`
-负责结构路由，`behavioral-acceptance-review` 负责独立输入和 oracle。两类审查共享
-review epoch，目标从“让测试变绿”变成“用证据证明这条生产路径确实必要”，同时避免
-同一候选版本反复启动 reviewer。
+常驻规则负责价值排序，但不能保证每次都被执行。skill 提供完整方法，但仍可能没有
+被调用；因此 `AGENTS.md` 明确规定何时必须先过 Reality Gate，project-to-act 提供
+唯一的持久记录，hook 再把实现后的结构风险变成真实完成条件。`design-integrity-review`
+负责结构路由，`behavioral-acceptance-review` 负责独立输入和 oracle。三者各自只有一
+个职责，不把“多写提示词、多生成文档、多跑 reviewer”当成质量本身。
 
 ## License
 

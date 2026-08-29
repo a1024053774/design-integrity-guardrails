@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
@@ -14,6 +13,16 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+try:  # POSIX (macOS/Linux)
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - exercised on Windows
+    _fcntl = None
+
+try:  # Windows
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - exercised on POSIX
+    _msvcrt = None
 
 from design_integrity import (
     Finding,
@@ -139,8 +148,8 @@ def _collect_garbage(state_dir: Path) -> None:
     """Delete state files whose mtime is older than STATE_TTL_SECONDS.
 
     The normal Stop path does not unlink the sibling .lock: unlinking a file
-    another process may already be flock-waiting on would create two inodes and
-    two lock domains, breaking mutual exclusion. Collecting after 48h is safe
+    another process may already be waiting on would create two inodes and two
+    lock domains, breaking mutual exclusion. Collecting after 48h is safe
     because every successful lock acquisition refreshes the lock file mtime, so
     an mtime older than the TTL means no process acquired that lock within 48
     hours (the hook timeout is 10 seconds); there is neither an active holder
@@ -160,12 +169,36 @@ def _state_lock(state_path: Path):
     state_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = state_path.with_suffix(".lock")
     with lock_path.open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if _fcntl is not None:
+            _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
+
+            def unlock() -> None:
+                _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_UN)
+
+        elif _msvcrt is not None:
+            # msvcrt.locking locks one byte at the current file position. Keep
+            # the byte present and always seek back to make lock/unlock target
+            # the same range on Windows. LK_LOCK waits in bounded one-second
+            # intervals, which fits the hook's ten-second command timeout.
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_LOCK, 1)
+
+            def unlock() -> None:
+                lock_file.seek(0)
+                _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_UNLCK, 1)
+
+        else:  # pragma: no cover - every supported platform has one backend
+            raise RuntimeError("no supported file-lock backend")
+
         os.utime(lock_path)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            unlock()
 
 
 def _is_true(value: object) -> bool:

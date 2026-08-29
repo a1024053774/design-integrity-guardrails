@@ -44,6 +44,18 @@
    或测试是否独立验证，使用 `design-integrity-review` 作为路由入口调用
    `acceptance-auditor`。本轮新增或修改的测试是待审证据，不是唯一 oracle；无法证明
    外部输入和独立 oracle 时不得报告 `PASS`。
+8. 若事实、需求、领域规则、外部行为或验收条件不完整，且缺口可能改变架构、部署、
+   迁移、安全、性能、数据语义或返工成本，先使用 `reality-first-engineering` 建立一次
+   Reality Gate，再进行架构或大范围实现。没有任何单一领域是唯一触发条件。把事实
+   分为 `observed`、`measured`、`inferred`、`unknown`；关键未知未被小实验或明确
+   外部证据解除时，返回 `BLOCKED`/`INCOMPLETE`，不得用 fallback、
+   兼容 API、mock-only 分支或猜测性实现绕过。相同架构决策批次的多次编辑不重复启动
+   该门；新证据推翻假设时才重新开门。
+9. `reality-first-engineering` 不创建 `REALITY.md`、第二套计划或并行状态源。若项目
+   使用 `project-to-act`，后者继续拥有唯一持久事实源：现实约束/事实写入 overview，
+   实验与阻塞写入 progress，证据导致的架构选择写入 versions，Gate 与证据写入
+   acceptance；external-ledger 只写 canonical ledger。未配置的一次性项目不因 skill
+   加载自动初始化。
 
 ## 执行、Git 与进度
 
@@ -68,6 +80,9 @@
    测试和用户明确要求的验证不受此限制。
 4. 注释应解释不明显的理由、不变量、安全约束或外部特殊行为，而不是复述代码。
    公共 API 文档应描述可观察契约，而不是偶然的实现细节。
+5. 文档以一个当前的人类摘要和唯一 canonical ledger 为准；详细记录只为可追溯证据
+   服务，必须带来源、状态和最后验证时间。不要为了显得完整新增重复或容易过时的
+   Markdown；派生文档不得凌驾于代码、实测事实或 canonical ledger。
 
 ## 反过度防御与风险边界
 

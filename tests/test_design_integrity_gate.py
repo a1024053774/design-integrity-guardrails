@@ -130,6 +130,37 @@ class HookGateTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
+    def test_windows_lock_backend_uses_one_byte_lock(self) -> None:
+        class FakeMsvcrt:
+            LK_LOCK = 1
+            LK_UNLCK = 2
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[int, int]] = []
+
+            def locking(self, _fd: int, mode: int, size: int) -> None:
+                self.calls.append((mode, size))
+
+        fake = FakeMsvcrt()
+        state_path = self.state_dir / "windows.json"
+        with patch.object(integrity_hook, "_fcntl", None), patch.object(
+            integrity_hook, "_msvcrt", fake
+        ):
+            with integrity_hook._state_lock(state_path):
+                self.assertTrue(state_path.with_suffix(".lock").exists())
+            with integrity_hook._state_lock(state_path):
+                self.assertEqual(1, state_path.with_suffix(".lock").stat().st_size)
+
+        self.assertEqual(
+            [
+                (fake.LK_LOCK, 1),
+                (fake.LK_UNLCK, 1),
+                (fake.LK_LOCK, 1),
+                (fake.LK_UNLCK, 1),
+            ],
+            fake.calls,
+        )
+
     def _event(
         self,
         name: str,

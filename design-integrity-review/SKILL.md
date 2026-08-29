@@ -9,6 +9,21 @@ Review one candidate change at a completion checkpoint. This skill is a router a
 focused structural review, not a general QA pass. It is read-only: do not edit files,
 tests, fixtures, commits, branches, deployments, or external systems.
 
+## Relationship with reality-first-engineering
+
+`reality-first-engineering` is the earlier architecture gate. If the task has incomplete
+requirements, domain rules, external behavior, acceptance criteria, or other unverified facts
+that could change the architecture, confirm that a `REALITY GATE: PASS` exists for the
+current architecture epoch
+before spending review budget here. If it does not, stop this route and send the agent to
+the reality gate; do not use a structural review to rationalize an unverified design. A new
+measurement that invalidates the architecture starts a new reality epoch and invalidates
+the candidate for this review.
+
+The reality gate and this review have different jobs: the former tests whether the direction
+is justified; this skill checks whether the frozen implementation introduced structural or
+acceptance shortcuts. Neither creates a second project ledger or repeats the other review.
+
 ## Choose one route
 
 Inspect the task, active instructions, the candidate diff, and changed paths first.
