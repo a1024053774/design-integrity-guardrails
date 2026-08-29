@@ -19,7 +19,11 @@ SCRIPTS_DIR = (
 )
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from design_integrity import scan_unified_diff  # noqa: E402
+from design_integrity import (
+    acceptance_paths_from_diff,
+    requires_acceptance_review,
+    scan_unified_diff,
+)  # noqa: E402
 import integrity_hook  # noqa: E402
 from integrity_hook import handle_event  # noqa: E402
 
@@ -122,14 +126,23 @@ class HookGateTests(unittest.TestCase):
         )
 
     def _write(self, relative_path: str, content: str) -> None:
-        (self.repo / relative_path).write_text(content, encoding="utf-8")
+        path = self.repo / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
-    def _event(self, name: str, *, active: bool = False) -> dict[str, object]:
+    def _event(
+        self,
+        name: str,
+        *,
+        active: bool = False,
+        turn_id: str = "turn-1",
+    ) -> dict[str, object]:
         return {
             "session_id": "session-1",
             "cwd": str(self.repo),
             "hook_event_name": name,
             "stop_hook_active": active,
+            "turn_id": turn_id,
         }
 
     def test_blocks_only_for_risk_introduced_after_baseline(self) -> None:
@@ -239,6 +252,281 @@ class HookGateTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual([], list(self.state_dir.glob("*.json")))
 
+    def test_same_risk_is_not_blocked_again_after_active_stop(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n    return fallback_client.load()\n",
+        )
+
+        first = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertEqual("block", first["decision"])
+
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop", active=True),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+        self.assertTrue(list(self.state_dir.glob("*.json")))
+
+        second = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertIsNone(second)
+
+    def test_new_turn_resets_review_budget_after_acknowledged_epoch(self) -> None:
+        handle_event(
+            self._event("PreToolUse", turn_id="turn-1"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n    return fallback_client.load()\n",
+        )
+        self.assertEqual(
+            "block",
+            handle_event(
+                self._event("Stop", turn_id="turn-1"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )["decision"],
+        )
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop", active=True, turn_id="turn-1"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+
+        # A real new user turn gets a new baseline and a fresh automatic budget.
+        handle_event(
+            self._event("PreToolUse", turn_id="turn-2"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n"
+            "    try:\n"
+            "        return fetch()\n"
+            "    except Exception:\n"
+            "        return None\n",
+        )
+        result = handle_event(
+            self._event("Stop", turn_id="turn-2"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertEqual("block", result["decision"])
+        self.assertIn("epoch 1/", result["reason"].lower())
+
+    def test_pending_review_is_not_dropped_on_turn_change(self) -> None:
+        handle_event(
+            self._event("PreToolUse", turn_id="turn-1"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n    return fallback_client.load()\n",
+        )
+        first = handle_event(
+            self._event("Stop", turn_id="turn-1"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertEqual("block", first["decision"])
+
+        # An interrupted/newly steered turn cannot silently discard the pending gate.
+        handle_event(
+            self._event("PreToolUse", turn_id="turn-2"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        continued = handle_event(
+            self._event("Stop", active=True, turn_id="turn-2"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertIsNone(continued)
+        self.assertTrue(list(self.state_dir.glob("*.json")))
+
+    def test_repeated_non_active_stop_does_not_acknowledge_pending_review(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("service.py", "def load():\n    return fallback_client.load()\n")
+
+        first = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertEqual("block", first["decision"])
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+
+        state_path = next(self.state_dir.glob("*.json"))
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertTrue(payload["blocked_risk_signatures"])
+
+    def test_new_risk_after_an_acknowledged_epoch_is_blocked_once(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n    return fallback_client.load()\n",
+        )
+        self.assertEqual(
+            "block",
+            handle_event(
+                self._event("Stop"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )["decision"],
+        )
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop", active=True),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+
+        self._write(
+            "service.py",
+            "def load():\n"
+            "    try:\n"
+            "        return fetch()\n"
+            "    except Exception:\n"
+            "        return None\n",
+        )
+        result = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertEqual("block", result["decision"])
+        self.assertIn("epoch", result["reason"].lower())
+
+    def test_review_epoch_budget_stops_automatic_respawn(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        versions = (
+            ("service.py", "def load():\n    return fallback_client.load()\n"),
+            (
+                "service.py",
+                "def load():\n"
+                "    try:\n"
+                "        return fetch()\n"
+                "    except Exception:\n"
+                "        return None\n",
+            ),
+            ("src/client.ts", "export function loadUserV2() {\n  return 1;\n}\n"),
+            ("other.py", "def read():\n    return fallback_client.load()\n"),
+        )
+
+        for index, (path, content) in enumerate(versions):
+            self._write(path, content)
+            result = handle_event(
+                self._event("Stop"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+            if index < integrity_hook.MAX_REVIEW_EPOCHS:
+                self.assertEqual("block", result["decision"])
+                self.assertIsNone(
+                    handle_event(
+                        self._event("Stop", active=True),
+                        agent="codex",
+                        state_dir=self.state_dir,
+                    )
+                )
+            else:
+                self.assertEqual("block", result["decision"])
+                self.assertIn("budget", result["reason"].lower())
+
+    def test_acceptance_classifier_only_returns_matching_paths(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("autoresearch/run.py", "def run():\n    return 1\n")
+        self._write("service.py", "def load():\n    return 1\n")
+
+        result = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertIn("autoresearch/run.py", result["reason"])
+        self.assertNotIn("service.py", result["reason"])
+
+    def test_acceptance_risk_routes_through_design_integrity_skill(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("autoresearch/run.py", "def run():\n    return 1\n")
+
+        result = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertEqual("block", result["decision"])
+        self.assertIn("$design-integrity-review", result["reason"])
+        self.assertIn("acceptance-auditor", result["reason"])
+
+    def test_ordinary_unit_test_change_does_not_trigger_acceptance_route(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("tests/test_service.py", "def test_load():\n    assert True\n")
+
+        result = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertIsNone(result)
+
     def test_hook_result_is_json_serializable(self) -> None:
         handle_event(
             self._event("PreToolUse"),
@@ -320,24 +608,24 @@ class HookGateTests(unittest.TestCase):
         self.assertIn("service.py", result["reason"])
 
     def test_parallel_pre_tool_hooks_cannot_advance_the_baseline(self) -> None:
-        original_scan = integrity_hook.scan_worktree
+        original_collect = integrity_hook.collect_worktree_diff
         second_scan_started = threading.Event()
         mutation_done = threading.Event()
         first_hook_done = threading.Event()
         call_lock = threading.Lock()
         scan_calls = 0
 
-        def coordinated_scan(cwd: Path, *args, **kwargs):
+        def coordinated_collect(cwd: Path, *args, **kwargs):
             nonlocal scan_calls
             with call_lock:
                 scan_calls += 1
                 call_number = scan_calls
             if call_number == 1:
                 second_scan_started.wait(timeout=1)
-                return original_scan(cwd, *args, **kwargs)
+                return original_collect(cwd, *args, **kwargs)
             second_scan_started.set()
             mutation_done.wait(timeout=2)
-            return original_scan(cwd, *args, **kwargs)
+            return original_collect(cwd, *args, **kwargs)
 
         def run_first_hook() -> None:
             handle_event(
@@ -347,7 +635,9 @@ class HookGateTests(unittest.TestCase):
             )
             first_hook_done.set()
 
-        with patch.object(integrity_hook, "scan_worktree", coordinated_scan):
+        with patch.object(
+            integrity_hook, "collect_worktree_diff", coordinated_collect
+        ):
             first = threading.Thread(target=run_first_hook)
             second = threading.Thread(target=run_first_hook)
             first.start()
@@ -661,6 +951,23 @@ class ScannerPrecisionTests(unittest.TestCase):
             with self.subTest(path=path, line=line):
                 kinds = {finding.kind for finding in scan_unified_diff(self._diff(path, line))}
                 self.assertIn("parallel-api-name", kinds)
+
+    def test_acceptance_surface_classifier_is_narrow(self) -> None:
+        acceptance = self._diff("autoresearch/run.py", "def run(): pass")
+        filename_acceptance = self._diff(
+            "tests/test_autoresearch.py", "def test_run(): pass"
+        )
+        ordinary = self._diff("src/service.py", "def run(): pass")
+
+        self.assertTrue(requires_acceptance_review(acceptance))
+        self.assertEqual(["autoresearch/run.py"], acceptance_paths_from_diff(acceptance))
+        self.assertTrue(requires_acceptance_review(filename_acceptance))
+        self.assertEqual(
+            ["tests/test_autoresearch.py"],
+            acceptance_paths_from_diff(filename_acceptance),
+        )
+        self.assertFalse(requires_acceptance_review(ordinary))
+        self.assertEqual([], acceptance_paths_from_diff(ordinary))
 
 
 if __name__ == "__main__":

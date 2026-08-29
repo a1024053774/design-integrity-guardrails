@@ -1,53 +1,70 @@
 ---
 name: design-integrity-review
-description: Review a current code diff in an isolated context for unjustified catch/except handling, fallbacks, compatibility paths, duplicate or parallel APIs, and local patches that bypass root-cause ownership. Use before finishing non-trivial changes when these constructs appear or when a completion gate requests the review. Do not use for documentation-only or formatting-only changes.
+description: Route one frozen candidate change through a focused structural-integrity review, or to behavioral-acceptance-review when tests, evals, benchmarks, autoresearch, generated artifacts, or other acceptance surfaces changed. Use at a completion checkpoint, not after every edit; do not use for documentation-only or formatting-only changes.
 ---
 
 # Design Integrity Review
 
-Review the current diff or the range named by the caller. This is a read-only review: do not edit files, create commits, or write a clean-review ledger entry.
+Review one candidate change at a completion checkpoint. This skill is a router and a
+focused structural review, not a general QA pass. It is read-only: do not edit files,
+tests, fixtures, commits, branches, deployments, or external systems.
 
-## Preserve Context Independence
+## Choose one route
 
-- If the host already started this skill in an isolated or forked context, review directly.
-- Otherwise, when fresh subagents are available, delegate the review to one fresh subagent. Give it the original task, diff or range, active repository instructions, and read-only repository access. Do not give it the implementing agent's rationale or conclusions.
-- If isolation is unavailable, disclose that limitation and still apply the evidence requirements below.
+Inspect the task, active instructions, the candidate diff, and changed paths first.
 
-## Establish the Evidence
+- If the change touches `autoresearch`, `eval`, `benchmark`, `harness`, `grader`,
+  `golden`, `oracle`, or another explicit evaluation surface, invoke the
+  `behavioral-acceptance-review` skill and delegate exactly one review to the
+  configured `acceptance-auditor`.
+- Otherwise, review only structural risks introduced by the candidate: broad or
+  swallowed exception handling, fallback/retry paths, compatibility branches,
+  duplicate or parallel APIs, and local patches that bypass root-cause ownership.
+- If both kinds of risk are present, use one `acceptance-auditor` call and include
+  the scanner's structural markers as review context. Do not start a second reviewer.
+- Documentation-only, formatting-only, screenshot-only, and test-fixture maintenance
+  changes do not require this skill unless the task explicitly requests review.
 
-1. Inspect the original task and active `AGENTS.md`, `CLAUDE.md`, or repository rules.
-2. Inspect the diff, then read only the relevant callers, tests, contracts, and neighboring abstractions needed to judge it.
-3. Run `scripts/design_integrity.py` from this skill directory against the repository as a routing aid. Treat its output as risk markers, not findings.
-4. Independently inspect newly added public symbols and alternate entry points even when the scanner reports none.
+## Freeze the candidate
 
-The scanner compares the current diff with the task baseline. It reports only newly
-added risk markers. A newly added `pass` or default return may sit inside an existing
-`catch`/`except`/`rescue` boundary, so unchanged context lines are used only to locate
-that boundary; context lines themselves are never reported as new findings. Ruby
-`rescue` detection is intentionally limited to high-confidence forms (a rescue clause
-or a clearly shaped modifier such as `expr rescue nil` / `expr rescue {}`), rather than
-matching the word inside ordinary prose or strings.
+The candidate must be a stable commit, patch, or read-only worktree snapshot. The
+implementing agent must not edit, commit, or deploy while the review is running. If
+the target changes, stop and report `INCOMPLETE`; do not chase a moving diff.
 
-## Apply the Gates
+Multiple edits or commits in one answer are one review epoch when they are part of the
+same planned change. The lifecycle hook uses the host-provided `turn_id` to keep that
+budget scoped to one user request: a new turn starts a fresh baseline after the prior
+epoch is acknowledged, while an unresolved pending review is retained. Wait until that
+cohesive batch is ready. A new epoch is justified only when a later checkpoint introduces
+a new structural risk scope or a new explicit acceptance surface. Do not re-review the
+same risk scope merely because a line, commit, or test count changed.
 
-For every added catch/except, fallback, retry or compatibility path, duplicate API, or special branch, determine:
+## Structural gates
 
-- **Reachability:** Which real caller, input, current contract, observed failure, or credible risk requires it?
-- **Ownership:** Does this layer actually own recovery, degradation, cleanup, or error translation? Is the original cause preserved and observable?
-- **Architecture:** Why can the existing abstraction or interface not carry the correct behavior? Would changing the root-cause layer and its required callers yield one clearer production path?
-- **Proportion:** Is the change scoped to the root cause without unrelated cleanup or a bug-sized architectural rewrite?
+For each confirmed structural risk, establish:
 
-A comment or an implementing-agent explanation is not evidence by itself. Missing evidence means the construct is unjustified.
+- **Reachability:** the real caller, input, contract, or observed failure;
+- **Ownership:** whether this layer owns recovery, degradation, cleanup, or translation;
+- **Architecture:** why the existing abstraction cannot carry the correct behavior;
+- **Proportion:** whether the fix is limited to the root cause.
 
-## Report
+Scanner output is a routing signal, not proof. Inspect relevant callers and contracts,
+but do not turn this review into a broad behavior audit. Tests added or modified by the
+implementing agent are evidence to inspect, not a reason to expand the scope.
 
-Report only confirmed, actionable findings. Each finding must contain:
+## Review budget and report
 
-1. exact file and line;
-2. the reachable caller, input, failure, or contract;
-3. the concrete maintenance or behavioral failure;
-4. the simpler coherent correction.
+Use one bounded reviewer call per epoch. If it returns confirmed findings, the
+implementing agent may fix the batch and request at most one targeted re-review of the
+changed scope. A timeout, unavailable reviewer, moving snapshot, or missing evidence is
+`INCOMPLETE`; do not poll, interrupt, close, and respawn automatically.
 
-If no item meets that standard, report that the review passed. If the only correct fix exceeds current scope or authorization, report the root cause, required change, impact, and smallest options; do not propose a side path and do not call the unimplemented repair complete.
+Report only confirmed, actionable findings with exact file and line, reachable evidence,
+concrete failure or maintenance cost, and the simpler coherent correction. Return one of:
 
-Create or update a project ledger only after a real recurring class is confirmed and the current task authorizes that documentation change. Promote mechanically decidable classes to deterministic checks; keep semantic classes in this review.
+- `PASS`: no confirmed finding in the selected scope;
+- `FAIL`: at least one reachable or reproduced finding;
+- `INCOMPLETE`: the scope, oracle, snapshot, or reviewer was unavailable.
+
+Do not claim `PASS` because a deterministic scanner is quiet or a test suite is green.
+Do not create a project ledger entry for a one-off review.

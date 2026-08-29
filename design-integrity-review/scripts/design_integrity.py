@@ -39,7 +39,21 @@ SOURCE_SUFFIXES = {
     ".tsx",
 }
 TEST_PARTS = {"__tests__", "fixture", "fixtures", "spec", "specs", "test", "tests"}
+ACCEPTANCE_PARTS = {
+    "acceptance",
+    "autoresearch",
+    "benchmark",
+    "benchmarks",
+    "eval",
+    "evals",
+    "golden",
+    "grader",
+    "graders",
+    "harness",
+    "oracle",
+}
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+DIFF_PATH_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
 EXCEPTION_RE = re.compile(
     r"(?:^|[;}])\s*catch\b[^{;]*\{"                # catch 子句（含 } catch、单行 try{..}catch、Swift catch let e {），要求同行出现 {
     r"|^\s*(?:\}\s*)?catch\s*(?:\([^)]*\))?\s*$"   # Allman 风格：catch(...) 或 catch 独占一行，{ 在下一行
@@ -172,6 +186,58 @@ def is_reviewable_source(path: str) -> bool:
     if ".test." in name or ".spec." in name:
         return False
     return posix_path.suffix.lower() in SOURCE_SUFFIXES
+
+
+def changed_paths_from_diff(diff: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for raw_line in diff.splitlines():
+        if raw_line.startswith("+++ b/"):
+            path = raw_line[6:]
+        else:
+            match = DIFF_PATH_RE.match(raw_line)
+            if not match:
+                continue
+            path = match.group(2)
+        if path == "/dev/null" or path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _is_acceptance_path(path: str) -> bool:
+    parts = {part.lower() for part in PurePosixPath(path).parts}
+    if parts & ACCEPTANCE_PARTS:
+        return True
+    name = PurePosixPath(path).name.lower()
+    return any(
+        token in name
+        for token in (
+            "_acceptance",
+            "_autoresearch",
+            "_benchmark",
+            "_eval",
+            "_golden",
+            "_grader",
+            "_harness",
+            "_oracle",
+        )
+    )
+
+
+def acceptance_paths_from_diff(diff: str) -> list[str]:
+    return [path for path in changed_paths_from_diff(diff) if _is_acceptance_path(path)]
+
+
+def requires_acceptance_review(diff: str) -> bool:
+    """Return whether a diff belongs to a high-risk acceptance surface.
+
+    This deliberately routes only explicit evaluation surfaces. Ordinary unit-test
+    edits remain covered by evidence-first testing without starting a model review;
+    callers can invoke the acceptance skill explicitly for other behavioral work.
+    """
+    return bool(acceptance_paths_from_diff(diff))
 
 
 def _is_comment_line(text: str) -> bool:
