@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -198,7 +199,11 @@ def changed_paths_from_diff(diff: str) -> list[str]:
             match = DIFF_PATH_RE.match(raw_line)
             if not match:
                 continue
-            path = match.group(2)
+            for path in match.groups():
+                if path != "/dev/null" and path not in seen:
+                    seen.add(path)
+                    paths.append(path)
+            continue
         if path == "/dev/null" or path in seen:
             continue
         seen.add(path)
@@ -228,6 +233,23 @@ def _is_acceptance_path(path: str) -> bool:
 
 def acceptance_paths_from_diff(diff: str) -> list[str]:
     return [path for path in changed_paths_from_diff(diff) if _is_acceptance_path(path)]
+
+
+def acceptance_diff_digest(diff: str) -> str:
+    """Return a stable digest for changed explicit acceptance-surface sections."""
+    chunks: list[str] = []
+    current_path: str | None = None
+    include = False
+    for raw_line in diff.splitlines():
+        match = DIFF_PATH_RE.match(raw_line)
+        if match:
+            old_path, current_path = match.groups()
+            include = _is_acceptance_path(old_path) or _is_acceptance_path(current_path)
+        if include:
+            chunks.append(raw_line)
+    if not chunks:
+        return ""
+    return hashlib.sha256("\n".join(chunks).encode("utf-8")).hexdigest()
 
 
 def requires_acceptance_review(diff: str) -> bool:

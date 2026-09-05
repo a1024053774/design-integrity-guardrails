@@ -1,6 +1,6 @@
 ---
 name: design-integrity-review
-description: Route one frozen candidate change through a focused structural-integrity review, or to behavioral-acceptance-review when tests, evals, benchmarks, autoresearch, generated artifacts, or other acceptance surfaces changed. Use at a completion checkpoint, not after every edit; do not use for documentation-only or formatting-only changes.
+description: Route one frozen candidate change through a focused structural-integrity review, or to behavioral-acceptance-review when an explicit evaluation surface changed. Use at a completion checkpoint, not during ordinary edits; do not use for documentation-only, formatting-only, or routine test maintenance.
 ---
 
 # Design Integrity Review
@@ -37,7 +37,8 @@ Inspect the task, active instructions, the candidate diff, and changed paths fir
   duplicate or parallel APIs, and local patches that bypass root-cause ownership.
 - If both kinds of risk are present, use one `acceptance-auditor` call and include
   the scanner's structural markers as review context. Do not start a second reviewer.
-- Documentation-only, formatting-only, screenshot-only, and test-fixture maintenance
+- Routine unit-test edits, generated files that are not an acceptance surface,
+  documentation-only, formatting-only, screenshot-only, and fixture maintenance
   changes do not require this skill unless the task explicitly requests review.
 
 ## Freeze the candidate
@@ -51,8 +52,9 @@ same planned change. The lifecycle hook uses the host-provided `turn_id` to keep
 budget scoped to one user request: a new turn starts a fresh baseline after the prior
 epoch is acknowledged, while an unresolved pending review is retained. Wait until that
 cohesive batch is ready. A new epoch is justified only when a later checkpoint introduces
-a new structural risk scope or a new explicit acceptance surface. Do not re-review the
-same risk scope merely because a line, commit, or test count changed.
+a new structural risk scope or changes the acceptance diff, including changes to an
+already-known acceptance path. Do not re-review the same frozen scope merely because a line,
+commit, or test count changed.
 
 ## Structural gates
 

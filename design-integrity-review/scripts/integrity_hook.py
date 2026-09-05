@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover - exercised on POSIX
 
 from design_integrity import (
     Finding,
+    acceptance_diff_digest,
     acceptance_paths_from_diff,
     collect_worktree_diff,
     introduced_findings,
@@ -47,8 +48,10 @@ class HookState:
     turn_id: str
     baseline_findings: list[Finding]
     baseline_acceptance_paths: list[str]
+    baseline_acceptance_digest: str
     blocked_risk_signatures: list[tuple[str, str, str]]
     blocked_acceptance_paths: list[str]
+    blocked_acceptance_digest: str
     review_epochs: int
 
 
@@ -65,8 +68,10 @@ def _write_state(
     turn_id: str = "",
     findings: list[Finding],
     baseline_acceptance_paths: list[str] | None = None,
+    baseline_acceptance_digest: str = "",
     blocked_risk_signatures: list[tuple[str, str, str]] | None = None,
     blocked_acceptance_paths: list[str] | None = None,
+    blocked_acceptance_digest: str = "",
     review_epochs: int = 0,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,10 +81,12 @@ def _write_state(
         "turn_id": turn_id,
         "findings": [finding.to_dict() for finding in findings],
         "baseline_acceptance_paths": sorted(set(baseline_acceptance_paths or [])),
+        "baseline_acceptance_digest": baseline_acceptance_digest,
         "blocked_risk_signatures": [
             list(signature) for signature in (blocked_risk_signatures or [])
         ],
         "blocked_acceptance_paths": sorted(set(blocked_acceptance_paths or [])),
+        "blocked_acceptance_digest": blocked_acceptance_digest,
         "review_epochs": review_epochs,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -110,10 +117,12 @@ def _read_state(path: Path) -> HookState | None:
             baseline_acceptance_paths=[
                 str(item) for item in payload.get("baseline_acceptance_paths", [])
             ],
+            baseline_acceptance_digest=str(payload.get("baseline_acceptance_digest", "")),
             blocked_risk_signatures=blocked_signatures,
             blocked_acceptance_paths=[
                 str(item) for item in payload.get("blocked_acceptance_paths", [])
             ],
+            blocked_acceptance_digest=str(payload.get("blocked_acceptance_digest", "")),
             review_epochs=int(payload.get("review_epochs", 0)),
         )
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -132,16 +141,25 @@ def _risk_signatures(findings: list[Finding]) -> list[tuple[str, str, str]]:
 
 
 def _has_pending_review(state: HookState) -> bool:
-    return bool(state.blocked_risk_signatures or state.blocked_acceptance_paths)
+    return bool(
+        state.blocked_risk_signatures
+        or state.blocked_acceptance_paths
+        or state.blocked_acceptance_digest
+    )
 
 
 def _scan_current(
     cwd: Path,
     base_revision: str,
-) -> tuple[Path | None, list[Finding], list[str]]:
+) -> tuple[Path | None, list[Finding], list[str], str]:
     """Collect one diff and derive both review routes from it."""
     root, diff = collect_worktree_diff(cwd, base_revision)
-    return root, scan_unified_diff(diff), acceptance_paths_from_diff(diff)
+    return (
+        root,
+        scan_unified_diff(diff),
+        acceptance_paths_from_diff(diff),
+        acceptance_diff_digest(diff),
+    )
 
 
 def _collect_garbage(state_dir: Path) -> None:
@@ -203,6 +221,40 @@ def _state_lock(state_path: Path):
 
 def _is_true(value: object) -> bool:
     return value is True or (isinstance(value, str) and value.lower() == "true")
+
+
+def _normalize_cursor_payload(payload: dict[str, object]) -> dict[str, object] | None:
+    """Translate Cursor's native hook envelope to the shared hook state shape."""
+    event = str(payload.get("hook_event_name", ""))
+    if event not in {"preToolUse", "stop"}:
+        return None
+
+    conversation_id = payload.get("conversation_id")
+    roots = payload.get("workspace_roots")
+    if not isinstance(conversation_id, str) or not conversation_id:
+        return None
+    if not isinstance(roots, list) or not roots or not isinstance(roots[0], str):
+        return None
+
+    generation_id = payload.get("generation_id")
+    turn_id = (
+        generation_id
+        if isinstance(generation_id, str) and generation_id
+        else conversation_id
+    )
+    loop_count = payload.get("loop_count", 0)
+    try:
+        active = int(loop_count) > 0
+    except (TypeError, ValueError):
+        active = False
+
+    return {
+        "hook_event_name": "PreToolUse" if event == "preToolUse" else "Stop",
+        "session_id": conversation_id,
+        "cwd": roots[0],
+        "turn_id": turn_id,
+        "stop_hook_active": active,
+    }
 
 
 def _review_reason(
@@ -278,7 +330,9 @@ def handle_event(
                     # budget. Capture a fresh baseline before the new tool runs.
                     root, base_revision = resolve_base_revision(cwd)
                     if root is not None and base_revision is not None:
-                        _, findings, acceptance_paths = _scan_current(cwd, base_revision)
+                        _, findings, acceptance_paths, acceptance_digest = _scan_current(
+                            cwd, base_revision
+                        )
                         _write_state(
                             state_path,
                             root=root,
@@ -286,6 +340,7 @@ def handle_event(
                             turn_id=turn_id,
                             findings=findings,
                             baseline_acceptance_paths=acceptance_paths,
+                            baseline_acceptance_digest=acceptance_digest,
                         )
                     else:
                         _remove_state(state_path)
@@ -297,7 +352,9 @@ def handle_event(
                 _collect_garbage(state_dir)
                 root, base_revision = resolve_base_revision(cwd)
                 if root is not None and base_revision is not None:
-                    _, findings, acceptance_paths = _scan_current(cwd, base_revision)
+                    _, findings, acceptance_paths, acceptance_digest = _scan_current(
+                        cwd, base_revision
+                    )
                     _write_state(
                         state_path,
                         root=root,
@@ -305,6 +362,7 @@ def handle_event(
                         turn_id=turn_id,
                         findings=findings,
                         baseline_acceptance_paths=acceptance_paths,
+                        baseline_acceptance_digest=acceptance_digest,
                     )
         return None
 
@@ -333,8 +391,10 @@ def handle_event(
                 turn_id=turn_id,
                 baseline_findings=state.baseline_findings,
                 baseline_acceptance_paths=state.baseline_acceptance_paths,
+                baseline_acceptance_digest=state.baseline_acceptance_digest,
                 blocked_risk_signatures=[],
                 blocked_acceptance_paths=[],
+                blocked_acceptance_digest="",
                 review_epochs=0,
             )
             _write_state(
@@ -344,12 +404,16 @@ def handle_event(
                 turn_id=turn_id,
                 findings=state.baseline_findings,
                 baseline_acceptance_paths=state.baseline_acceptance_paths,
+                baseline_acceptance_digest=state.baseline_acceptance_digest,
                 review_epochs=0,
             )
 
-        current_root, current_findings, current_acceptance_paths = _scan_current(
-            cwd, state.base_revision
-        )
+        (
+            current_root,
+            current_findings,
+            current_acceptance_paths,
+            current_acceptance_digest,
+        ) = _scan_current(cwd, state.base_revision)
         if current_root is None or current_root != state.root:
             _remove_state(state_path)
             return None
@@ -358,18 +422,22 @@ def handle_event(
         new_acceptance_paths = sorted(
             set(current_acceptance_paths) - set(state.baseline_acceptance_paths)
         )
-        if not introduced and not new_acceptance_paths:
+        acceptance_changed = (
+            current_acceptance_digest != state.baseline_acceptance_digest
+        )
+        if not introduced and not acceptance_changed:
             _remove_state(state_path)
             return None
 
         current_risk_signatures = set(_risk_signatures(introduced))
         blocked_risk_signatures = set(state.blocked_risk_signatures)
         blocked_acceptance_paths = set(state.blocked_acceptance_paths)
-        has_pending_epoch = bool(
-            blocked_risk_signatures or blocked_acceptance_paths
-        )
+        has_pending_epoch = _has_pending_review(state)
         new_risk_signatures = current_risk_signatures - blocked_risk_signatures
-        new_acceptance_scope = set(new_acceptance_paths) - blocked_acceptance_paths
+        new_acceptance_scope = (
+            acceptance_changed
+            and current_acceptance_digest != state.blocked_acceptance_digest
+        )
 
         # A Stop continuation for the same risk scope acknowledges that epoch.
         # Advance the baseline so later edits in the same turn can be compared
@@ -387,6 +455,7 @@ def handle_event(
                     turn_id=turn_id or state.turn_id,
                     findings=current_findings,
                     baseline_acceptance_paths=current_acceptance_paths,
+                    baseline_acceptance_digest=current_acceptance_digest,
                     review_epochs=state.review_epochs,
                 )
             return None
@@ -407,6 +476,8 @@ def handle_event(
                 baseline_acceptance_paths=state.baseline_acceptance_paths,
                 blocked_risk_signatures=_risk_signatures(introduced),
                 blocked_acceptance_paths=new_acceptance_paths,
+                baseline_acceptance_digest=state.baseline_acceptance_digest,
+                blocked_acceptance_digest=current_acceptance_digest,
                 review_epochs=state.review_epochs,
             )
             return {
@@ -428,6 +499,8 @@ def handle_event(
             baseline_acceptance_paths=state.baseline_acceptance_paths,
             blocked_risk_signatures=_risk_signatures(introduced),
             blocked_acceptance_paths=new_acceptance_paths,
+            baseline_acceptance_digest=state.baseline_acceptance_digest,
+            blocked_acceptance_digest=current_acceptance_digest,
             review_epochs=review_epoch,
         )
         return {
@@ -435,7 +508,12 @@ def handle_event(
             "reason": _review_reason(
                 agent,
                 introduced,
-                acceptance_paths=new_acceptance_paths,
+                acceptance_paths=(
+                    new_acceptance_paths
+                    or current_acceptance_paths
+                    if acceptance_changed
+                    else new_acceptance_paths
+                ),
                 review_epoch=review_epoch,
             ),
         }
@@ -443,7 +521,7 @@ def handle_event(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=("codex", "claude"), required=True)
+    parser.add_argument("--agent", choices=("codex", "claude", "cursor"), required=True)
     parser.add_argument(
         "--state-dir",
         type=Path,
@@ -456,7 +534,28 @@ def main() -> int:
     except (TypeError, ValueError, json.JSONDecodeError):
         return 0
 
+    if args.agent == "cursor":
+        payload = _normalize_cursor_payload(payload)
+        if payload is None:
+            print("{}")
+            return 0
+
     result = handle_event(payload, agent=args.agent, state_dir=args.state_dir)
+    if args.agent == "cursor":
+        if result is None:
+            print("{}")
+        elif result.get("decision") == "block":
+            # Cursor's stop hook continues the agent with a follow-up message;
+            # it does not consume the Codex/Claude decision field.
+            print(
+                json.dumps(
+                    {"followup_message": result["reason"]},
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print("{}")
+        return 0
     if result is not None:
         print(json.dumps(result, ensure_ascii=False))
     return 0

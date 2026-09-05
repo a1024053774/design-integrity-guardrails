@@ -1,4 +1,4 @@
-# Reality-First & Design-Integrity Guardrails
+# Reality-First, Evidence-First & Design-Integrity Guardrails
 
 一套给 Codex、Claude Code 和兼容 Agent 使用的轻量工程约束，目标是让 Agent 完成
 **满足验收条件的最小改动**，而不是把每个任务扩展成框架、适配器层和一套新测试
@@ -25,14 +25,27 @@
 | `karpathy-guidelines` | 执行期减法、测试预算和 Agent 分配 | 有设计选择的实现任务 |
 | `reality-first-engineering` | 实现前确认事实、未知和方向 | 缺口可能改变方案时 |
 | `design-integrity-review` | 冻结候选版本后的结构风险复审 | scanner 命中或显式要求 |
-| `behavioral-acceptance-review` | 验证测试/eval 是否独立证明行为 | 验收表面改变时 |
-| `evidence-first-testing` | 保留红态并证明测试检测到缺陷 | bug/测试工作时 |
+| `behavioral-acceptance-review` | 验证测试/eval 是否独立证明行为 | 明确验收表面改变时 |
+| `evidence-first-testing` | 保留红态并证明测试检测到行为 | bug/回归/测试或有明确验收契约的行为变更时 |
 | `integrity_hook.py` | 确定性记录基线并在结束时路由一次复审 | 有新增风险结构时 |
 | `project-to-act` | 唯一持久项目事实源 | 长期项目已有/明确采用时 |
 
 不要把这些部件再组合成一个“大审查 Skill”。每层只解决自己的失败模式。
-`karpathy-guidelines` 和 `evidence-first-testing` 是可独立安装的伴随 Skill；本仓库
-只规定它们在这套流程中的职责，不复制第二份项目账本或测试基础设施。
+`karpathy-guidelines` 是可独立安装的伴随 Skill；本仓库同时收录
+`evidence-first-testing`，但不复制第二份项目账本或测试基础设施。
+
+## 公司分享入口
+
+这套方法可以用两个问题讲清楚：
+
+1. **Reality-First Engineering：我们是否在解决正确的问题？**
+   在架构或大范围实现前，把事实、测量、推断和未知分开，并用最小可证伪实验决定方向。
+2. **Evidence-First Testing：我们是否证明了改动真的有效？**
+   保留修复前的红态或反例，再用同一个信号验证修复后的绿态；没有安全反事实时，明确说
+   证据未完成。
+
+两者的共同原则是：`PASS` 需要证据，`BLOCKED`/`INCOMPLETE` 是诚实的工程结果，
+不是需要用 fallback、mock-only 分支或更多文档掩盖的失败。
 
 ## 工作协议
 
@@ -64,12 +77,16 @@
 
 仓库中的 [AGENTS.md](AGENTS.md) 是短版常驻规则，核心只有几件事：
 
-1. 开工前说明目标、非目标、验收条件和未知事实；先读代码、调用方和现有测试。
+1. 开工前说明目标、非目标、验收条件和未知事实；按任务规模和风险读取足够的代码、
+   直接调用方、配置和现有测试，同一计划内不因每次编辑机械重读。
 2. 选择根因所在层，避免为了少改而增加旁路；没有真实 caller、contract、observed
    failure 或安全理由，就不添加新层、fallback、重试或兼容路径。
-3. 发现前提错误、范围膨胀或授权不足时停下来上报；不要用漂亮补丁掩盖。
+3. 用户请求在明确范围内授权正常的连续执行；只有不可逆或外部副作用、实质扩大
+   范围/授权，或会改变方向的关键未知才停下确认。发现前提错误或正确修复超出范围时，
+   停下来上报是合规的成功结局。
 4. 不默认使用多个 Agent；先完成一条内聚路径，再决定是否需要委派。
-5. 测试只服务当前验收；相关现有测试优先，新增测试必须证明未覆盖的行为。
+5. 测试只服务当前验收；相关现有测试优先，新增测试按不同验收条件、边界或故障模式
+   证明必要性，不以固定数量、长度或绿色结果代替证据。
 
 ## Reality-first engineering
 
@@ -83,21 +100,27 @@
 它与 `project-to-act` 不冲突：Reality 负责当前方向判断，`project-to-act` 负责唯一的
 持久目标、进度、版本、证据和验收记录。Reality 不创建 `REALITY.md` 或第二套计划。
 
-## 测试和验收边界
+## Evidence-first testing
 
 测试前先问：
 
 1. 这条测试验证哪条当前验收条件？
 2. 没有它，现有测试会漏掉哪个真实回归？
-3. 它是否比实现更简单、且能让一个已知坏实现失败？
+3. 它是否能让一个已知坏实现失败，且其输入和 oracle 独立于生产实现？
 
-默认只增加一个主路径和一个关键失败路径。不要为了完整性新增快照矩阵、参数网格、
-端到端框架或测试基础设施。涉及 bug 或测试改动时，再使用 `evidence-first-testing`
-保留红态/反例。
+“一个主路径＋一个失败路径”只是开始检查的启发，不是配额或上限。需要更多覆盖时，
+为每个新增案例说明它证明的契约或故障模式；没有证据时不要新增矩阵、快照、端到端
+框架或测试基础设施。测试可以比实现更复杂，只要复杂度来自真实边界或独立 oracle，
+而不是复制生产逻辑。涉及 bug 或测试改动时，再使用 `evidence-first-testing` 保留
+红态/反例；新行为可以用预期红态的契约测试，但不要把它误报成已复现的旧缺陷。
 
-涉及 `eval`、`benchmark`、`autoresearch`、`harness`、`golden`、`oracle` 或生成产物时，
-由 `design-integrity-review` 统一路由到一次 `behavioral-acceptance-review`；实现者
-新增的测试只是待审证据，不是唯一 oracle。
+如果修复已经先落地，使用父版本、临时回退或定向 mutation 恢复反事实；无法安全恢复时，
+报告“修复后通过，但回归证明未完成”。
+
+涉及 `eval`、`benchmark`、`autoresearch`、`harness`、`golden`、`oracle`，或明确作为
+验收表面的生成产物时，由 `design-integrity-review` 统一路由到一次
+`behavioral-acceptance-review`；普通测试和普通生成文件不会仅因文件名出现就触发。
+实现者新增的测试只是待审证据，不是唯一 oracle。
 
 ## 结构风险扫描
 
@@ -110,8 +133,12 @@
 - 代码形态的 fallback；
 - `V2`、`Compat`、`Legacy`、`Safe` 等疑似并行 API。
 
-命中不等于缺陷。`integrity_hook.py` 记录本轮基线，结束时最多请求一次初审和一次
-定向复审；它不会自动启动多个 reviewer，也不会把 scanner 安静当成 `PASS`。
+命中不等于缺陷。`integrity_hook.py` 记录本轮基线，候选版本冻结后最多请求一次初审和
+一次定向复审；同一回答里的普通迭代不逐次启动 reviewer。它不会自动启动多个 reviewer，
+也不会把 scanner 安静当成 `PASS`。普通单元测试、非验收产物、文档和格式改动不会自动
+进入这条流程，除非用户显式要求。验收路由记录的是验收 diff 的内容指纹，因此同一
+`autoresearch`/`eval` 文件在首次复审后继续修改，也会被识别为新的验收候选；纯 rename
+也会保留原验收路径的路由信号。
 
 ## 项目账本与文档
 
@@ -129,7 +156,7 @@
 
 ## 安装
 
-先克隆仓库，然后将三个 Skill 链接到 Codex/Claude 的用户目录：
+先克隆仓库，然后将仓库内的四个 Skill 链接到 Codex/Claude 的用户目录：
 
 ```bash
 git clone git@github.com:a1024053774/design-integrity-guardrails.git
@@ -137,19 +164,26 @@ cd design-integrity-guardrails
 
 mkdir -p ~/.agents/skills ~/.claude/skills ~/.codex/skills
 ln -s "$PWD/reality-first-engineering" ~/.agents/skills/reality-first-engineering
+ln -s "$PWD/evidence-first-testing" ~/.agents/skills/evidence-first-testing
 ln -s "$PWD/design-integrity-review" ~/.agents/skills/design-integrity-review
 ln -s "$PWD/behavioral-acceptance-review" ~/.agents/skills/behavioral-acceptance-review
+ln -s "$PWD/reality-first-engineering" ~/.codex/skills/reality-first-engineering
+ln -s "$PWD/evidence-first-testing" ~/.codex/skills/evidence-first-testing
+ln -s "$PWD/design-integrity-review" ~/.codex/skills/design-integrity-review
+ln -s "$PWD/behavioral-acceptance-review" ~/.codex/skills/behavioral-acceptance-review
 ln -s "$PWD/reality-first-engineering" ~/.claude/skills/reality-first-engineering
+ln -s "$PWD/evidence-first-testing" ~/.claude/skills/evidence-first-testing
 ln -s "$PWD/design-integrity-review" ~/.claude/skills/design-integrity-review
 ln -s "$PWD/behavioral-acceptance-review" ~/.claude/skills/behavioral-acceptance-review
 ```
 
-将 [AGENTS.md](AGENTS.md) 的规则合并到 `~/.codex/AGENTS.md` 和 `~/.claude/CLAUDE.md`，
-不要覆盖已有个人规则。
+仓库内的 [AGENTS.md](AGENTS.md) 是完整项目版规则。不要把它整份复制到全局配置，否则
+进入该仓库时会重复注入；全局 `~/.codex/AGENTS.md` / `~/.claude/CLAUDE.md` 只保留跨项目
+个人默认。已有个人规则应手工合并，不要直接覆盖。
 
-### Codex/Claude 生命周期门禁
+### Codex/Claude/Cursor 生命周期门禁
 
-在两个工具的现有 hook 配置中各追加一组 `PreToolUse` 和 `Stop`，命令分别为：
+在 Codex 或 Claude 的现有 hook 配置中各追加一组 `PreToolUse` 和 `Stop`，命令分别为：
 
 ```text
 python3 /absolute/path/to/repo/design-integrity-review/scripts/integrity_hook.py --agent codex
@@ -157,6 +191,9 @@ python3 /absolute/path/to/repo/design-integrity-review/scripts/integrity_hook.py
 ```
 
 Windows 使用 `py -3`；生命周期锁在 POSIX 使用 `fcntl`，Windows 使用 `msvcrt`。
+脚本也接受 `--agent cursor`，会把 Cursor 的原生 hook envelope 转换为同一状态机，
+并返回 Cursor 使用的 `followup_message` 形式；具体事件配置仍按 Cursor 当前版本的 hook
+配置格式接入。
 默认不安装额外的 `UserPromptSubmit` 提示 hook：它只能重复提醒，不能证明 Reality Gate
 已经通过，且会增加一条可能互相干扰的触发路径。Reality Gate 由常驻规则按需触发。
 
@@ -188,6 +225,10 @@ hook 只负责路由和去重，不直接启动模型；具体 provider、model�
 - 绿色测试只是证据，真实输入、独立 oracle 和真实入口才决定验收；
 - 多次迭代不重复拉起 reviewer，快照移动或证据不足时返回 `INCOMPLETE`；
 - 文档以一个当前摘要和一个 canonical ledger 为准。
+
+随后对 hook/scanner 做了定向复审：验收路由现在记录 diff 内容指纹，因此同一验收文件在
+首次复审后继续变化不会被路径集合误判为“没有新风险”；从验收目录重命名出去也仍保留
+路由信号。对应的跨 turn、Cursor payload 和 rename 用例已纳入测试。
 
 ## 已知边界
 

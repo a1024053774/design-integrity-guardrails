@@ -1,6 +1,6 @@
 ---
 name: reality-first-engineering
-description: Establish a short reality and decision gate before implementation when missing facts, requirements, external behavior, or acceptance criteria could change the direction. Use only for consequential or materially uncertain work.
+description: Establish a short, evidence-backed decision gate before architecture or broad implementation when missing facts, requirements, external behavior, or acceptance criteria could change the direction. Use only for consequential or materially uncertain work.
 ---
 
 # Reality-First Engineering
@@ -18,18 +18,24 @@ documentation/formatting-only work.
 1. **State the decision.** Write the goal, non-goals, acceptance condition, and the exact
    decision that must be made before implementation.
 2. **Separate facts from guesses.** Label each relevant item `observed`, `measured`,
-   `inferred`, or `unknown`. An implementation assumption is not evidence.
-3. **Choose the smallest probe.** For each unknown that could change the direction, define
-   one falsifiable experiment with real inputs, a pass condition, a failure condition, a
-   stop condition, an owner, and an evidence location. Test the highest-impact unknowns
-   first; do not build the whole system to discover them.
-4. **Gate the direction.** Return `PASS` only when the architecture/plan follows from the
-   available evidence. If a decisive fact is unavailable or a probe fails, return
-   `BLOCKED` or `INCOMPLETE` and report what is needed. Do not cover the gap with a
-   fallback, compatibility path, mock-only branch, or speculative abstraction.
+   `inferred`, or `unknown`. An implementation assumption is not evidence. For facts likely to
+   change, record the source and verification date.
+3. **Choose the smallest probe.** For each material unknown that could change the direction,
+   define one falsifiable experiment with real inputs, a pass condition, a failure condition, a
+   stop condition, an owner, and an evidence location. Test the highest-impact unknowns first;
+   stop once the decision is determined instead of building the whole system to discover it.
+4. **Gate the direction.** Return `PASS` only when the architecture or plan follows from the
+   available evidence.
+   - `BLOCKED`: a decisive input, authority, or probe is unavailable, or the evidence disproves
+     the proposed direction; no safe direction can be chosen.
+   - `INCOMPLETE`: evidence exists but is partial or ambiguous; narrow to verified work or
+     report what remains, and never silently treat it as `PASS`.
+   Do not cover the gap with a fallback, compatibility path, mock-only branch, or speculative
+   abstraction.
 5. **Keep the boundary testable.** Put external effects behind the existing boundary that
-   owns them and keep deterministic domain/state logic driven by supplied inputs. Add a
-   layer only when a concrete caller or boundary needs it.
+   owns them and keep deterministic domain/state logic driven by supplied inputs. A mock may
+   validate pure logic, but it cannot establish an external fact it replaces. Add a layer only
+   when a concrete caller or boundary needs it.
 
 ## One ledger, one epoch
 
@@ -61,8 +67,9 @@ DECISION:
 OBSERVED:
 MEASURED:
 INFERRED:
-UNKNOWN:
-PROBE: input, method, pass/fail, stop condition, owner, evidence
+UNKNOWN (material only):
+PROBE (repeat for each material unknown): input/context, method, pass/fail,
+stop condition, owner, evidence location
 DECISION CONSEQUENCE:
 LEDGER / NEXT:
 ```

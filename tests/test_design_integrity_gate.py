@@ -542,6 +542,107 @@ class HookGateTests(unittest.TestCase):
         self.assertIn("$design-integrity-review", result["reason"])
         self.assertIn("acceptance-auditor", result["reason"])
 
+    def test_changed_acceptance_file_after_ack_is_reviewed_again(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("autoresearch/run.py", "def run():\n    return 1\n")
+
+        first = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertEqual("block", first["decision"])
+        self.assertIn("autoresearch/run.py", first["reason"])
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop", active=True),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+
+        # The path is unchanged, but its acceptance behavior has changed.
+        self._write("autoresearch/run.py", "def run():\n    return 2\n")
+        second = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertEqual("block", second["decision"])
+        self.assertIn("epoch 2/", second["reason"].lower())
+        self.assertIn("autoresearch/run.py", second["reason"])
+
+    def test_pending_same_acceptance_file_change_survives_turn_change(self) -> None:
+        self._write("autoresearch/run.py", "def run():\n    return 1\n")
+        self._git("add", "autoresearch/run.py")
+        self._git("commit", "-qm", "add acceptance surface")
+        handle_event(
+            self._event("PreToolUse", turn_id="turn-1"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("autoresearch/run.py", "def run():\n    return 2\n")
+
+        first = handle_event(
+            self._event("Stop", turn_id="turn-1"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertEqual("block", first["decision"])
+
+        handle_event(
+            self._event("PreToolUse", turn_id="turn-2"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        continued = handle_event(
+            self._event("Stop", active=True, turn_id="turn-2"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertIsNone(continued)
+        self.assertTrue(list(self.state_dir.glob("*.json")))
+
+    def test_cursor_payload_normalization_preserves_generation_boundary(self) -> None:
+        payload = {
+            "hook_event_name": "stop",
+            "conversation_id": "conversation-1",
+            "generation_id": "generation-2",
+            "workspace_roots": [str(self.repo)],
+            "loop_count": 1,
+        }
+
+        normalized = integrity_hook._normalize_cursor_payload(payload)
+
+        self.assertEqual(
+            {
+                "hook_event_name": "Stop",
+                "session_id": "conversation-1",
+                "cwd": str(self.repo),
+                "turn_id": "generation-2",
+                "stop_hook_active": True,
+            },
+            normalized,
+        )
+        self.assertIsNone(
+            integrity_hook._normalize_cursor_payload(
+                {"hook_event_name": "stop", "conversation_id": "conversation-1"}
+            )
+        )
+
     def test_ordinary_unit_test_change_does_not_trigger_acceptance_route(self) -> None:
         handle_event(
             self._event("PreToolUse"),
@@ -557,6 +658,57 @@ class HookGateTests(unittest.TestCase):
         )
 
         self.assertIsNone(result)
+
+    def test_documentation_only_change_does_not_trigger_review(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write("README.md", "# Notes\n\nDocument the current behavior.\n")
+
+        result = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+
+        self.assertIsNone(result)
+
+    def test_acknowledged_review_allows_clean_followup_without_retriggering(self) -> None:
+        handle_event(
+            self._event("PreToolUse"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self._write(
+            "service.py",
+            "def load():\n    return fallback_client.load()\n",
+        )
+        first = handle_event(
+            self._event("Stop"),
+            agent="codex",
+            state_dir=self.state_dir,
+        )
+        self.assertEqual("block", first["decision"])
+
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop", active=True),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+        self._write("service.py", "def load():\n    return 1\n")
+
+        self.assertIsNone(
+            handle_event(
+                self._event("Stop"),
+                agent="codex",
+                state_dir=self.state_dir,
+            )
+        )
+        self.assertEqual([], list(self.state_dir.glob("*.json")))
 
     def test_hook_result_is_json_serializable(self) -> None:
         handle_event(
@@ -999,6 +1151,22 @@ class ScannerPrecisionTests(unittest.TestCase):
         )
         self.assertFalse(requires_acceptance_review(ordinary))
         self.assertEqual([], acceptance_paths_from_diff(ordinary))
+
+    def test_renaming_from_acceptance_surface_keeps_review_route(self) -> None:
+        diff = "\n".join(
+            [
+                "diff --git a/autoresearch/run.py b/src/run.py",
+                "similarity index 100%",
+                "rename from autoresearch/run.py",
+                "rename to src/run.py",
+            ]
+        )
+
+        self.assertTrue(requires_acceptance_review(diff))
+        self.assertEqual(
+            ["autoresearch/run.py"],
+            acceptance_paths_from_diff(diff),
+        )
 
 
 if __name__ == "__main__":
