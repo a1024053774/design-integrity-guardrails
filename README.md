@@ -34,7 +34,7 @@
 `karpathy-guidelines` 是可独立安装的伴随 Skill；本仓库同时收录
 `evidence-first-testing`，但不复制第二份项目账本或测试基础设施。
 
-## 公司分享入口
+## 分享入口
 
 这套方法可以用两个问题讲清楚：
 
