@@ -1,7 +1,0 @@
-interface:
-  display_name: "Agent 验收测试"
-  short_description: "Agent 产品验收闭环：规划、执行、取证、复测与交付判定"
-  default_prompt: "Use $agent-acceptance-testing to plan and run an evidence-backed acceptance cycle for an Agent product."
-
-policy:
-  allow_implicit_invocation: true
