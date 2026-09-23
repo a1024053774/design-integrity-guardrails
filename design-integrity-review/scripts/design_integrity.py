@@ -72,16 +72,6 @@ EXCEPTION_BODY_RE = re.compile(
 BROAD_EXCEPTION_RE = re.compile(
     r"^\s*except\*?\s*(?::|(?:Exception|BaseException)(?:\s+as\s+\w+)?\s*:)",
 )
-FALLBACK_RE = re.compile(
-    r"\b\w*fall_?back\w*\s*(?:\(|\.|\[|=(?!=))"   # 调用/属性链/下标/赋值/kwarg：fallback(、fallbackClient.、fallback_client =、fallback=True
-    r"|\.\w*fall_?back\w*\b",                     # 属性读取：client.fallback
-    re.IGNORECASE,
-)
-PARALLEL_API_RE = re.compile(
-    r"\b(?:def|function|class|func|fn|fun)\s+"
-    r"[A-Za-z_]\w*(?:_v\d+|_new|_safe|_fallback|_or_default|_compat|_legacy|"
-    r"V\d+|New|Safe|WithFallback|OrDefault|Compat|Legacy)\b",
-)
 INLINE_SWALLOW_RE = re.compile(
     r"(?:catch\s*(?:\([^)]*\))?\s*\{\s*\}|except[^:]*:\s*pass\b)",
 )
@@ -213,22 +203,10 @@ def changed_paths_from_diff(diff: str) -> list[str]:
 
 def _is_acceptance_path(path: str) -> bool:
     parts = {part.lower() for part in PurePosixPath(path).parts}
-    if parts & ACCEPTANCE_PARTS:
-        return True
-    name = PurePosixPath(path).name.lower()
-    return any(
-        token in name
-        for token in (
-            "_acceptance",
-            "_autoresearch",
-            "_benchmark",
-            "_eval",
-            "_golden",
-            "_grader",
-            "_harness",
-            "_oracle",
-        )
-    )
+    # A conventional directory is an explicit repository routing policy. A
+    # filename such as ``model_acceptance.py`` is not enough to establish that
+    # the file is an evaluation surface.
+    return bool(parts & ACCEPTANCE_PARTS)
 
 
 def acceptance_paths_from_diff(diff: str) -> list[str]:
@@ -255,21 +233,129 @@ def acceptance_diff_digest(diff: str) -> str:
 def requires_acceptance_review(diff: str) -> bool:
     """Return whether a diff belongs to a high-risk acceptance surface.
 
-    This deliberately routes only explicit evaluation surfaces. Ordinary unit-test
-    edits remain covered by evidence-first testing without starting a model review;
-    callers can invoke the acceptance skill explicitly for other behavioral work.
+    Automatic routing is limited to conventional evaluation-directory components.
+    Ordinary unit-test edits remain covered by evidence-first testing without
+    starting a model review; callers can invoke the acceptance skill explicitly
+    for other behavioral work.
     """
     return bool(acceptance_paths_from_diff(diff))
 
 
-def _is_comment_line(text: str) -> bool:
-    # C `*ptr = ...` dereference assignments are skipped, matching swallow-scan's `*` prefix rule.
-    stripped = text.strip()
-    return stripped.startswith(("#", "//", "/*", "*"))
-
-
 def _indentation(text: str) -> int:
     return len(text) - len(text.lstrip())
+
+
+@dataclass
+class _LexicalState:
+    """State needed to ignore literals and block comments across diff lines."""
+
+    quote: str | None = None
+    block_comment: str | None = None
+    escaped: bool = False
+
+
+def _mask_non_code(text: str, state: _LexicalState, suffix: str) -> str:
+    """Replace literals/comments with spaces while preserving positions.
+
+    The scanner is a diff router, not a language parser. It still must avoid treating
+    prose, log messages, or fixture values as executable structure. This small lexer
+    handles the string/comment forms shared by the supported source languages and
+    carries block state across adjacent diff lines.
+    """
+
+    c_like = suffix.lower() in {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".kts",
+        ".m",
+        ".mm",
+        ".php",
+        ".rs",
+        ".scala",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+    hash_comments = suffix.lower() in {".py", ".rb", ".sh"}
+    quote = state.quote
+    block_comment = state.block_comment
+    result: list[str] = []
+    index = 0
+
+    while index < len(text):
+        if block_comment:
+            end = text.find(block_comment, index)
+            if end < 0:
+                result.extend(" " for _ in text[index:])
+                return "".join(result)
+            result.extend(" " for _ in text[index : end + len(block_comment)])
+            index = end + len(block_comment)
+            block_comment = None
+            state.block_comment = None
+            continue
+
+        if quote:
+            delimiter = quote
+            while index < len(text):
+                if state.escaped:
+                    result.append(" ")
+                    state.escaped = False
+                    index += 1
+                elif text[index] == "\\":
+                    result.append(" ")
+                    state.escaped = True
+                    index += 1
+                elif text.startswith(delimiter, index):
+                    result.extend(" " for _ in delimiter)
+                    index += len(delimiter)
+                    quote = None
+                    state.quote = None
+                    break
+                else:
+                    result.append(" ")
+                    index += 1
+            if quote:
+                return "".join(result)
+            continue
+
+        if c_like and text.startswith("/*", index):
+            block_comment = "*/"
+            state.block_comment = block_comment
+            result.extend("  ")
+            index += 2
+            continue
+        if c_like and text.startswith("//", index):
+            result.extend(" " for _ in text[index:])
+            break
+        if hash_comments and text[index] == "#":
+            result.extend(" " for _ in text[index:])
+            break
+
+        delimiter: str | None = None
+        if text.startswith("'''", index) or text.startswith('"""', index):
+            delimiter = text[index : index + 3]
+        elif text[index] in {"'", '"'} or (c_like and text[index] == "`"):
+            delimiter = text[index]
+        if delimiter:
+            quote = delimiter
+            state.quote = delimiter
+            result.extend(" " for _ in delimiter)
+            index += len(delimiter)
+            continue
+
+        result.append(text[index])
+        index += 1
+
+    return "".join(result)
 
 
 def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
@@ -280,15 +366,34 @@ def scan_added_lines(lines: Iterable[AddedLine]) -> list[Finding]:
 
 def _scan_diff_lines(lines: Iterable[DiffLine]) -> list[Finding]:
     source_lines = [line for line in lines if is_reviewable_source(line.path)]
+    by_path: dict[str, list[DiffLine]] = {}
+    for line in source_lines:
+        by_path.setdefault(line.path, []).append(line)
+    for path_lines in by_path.values():
+        path_lines.sort(key=lambda item: item.line)
+
+    code_text: dict[int, str] = {}
+    for path, path_lines in by_path.items():
+        state = _LexicalState()
+        previous_line: int | None = None
+        suffix = PurePosixPath(path).suffix
+        for line in path_lines:
+            if previous_line is not None and line.line > previous_line + 1:
+                # A diff hunk omits the lines between these entries; do not carry a
+                # quote/comment state through unknown source.
+                state = _LexicalState()
+            code_text[id(line)] = _mask_non_code(line.text, state, suffix)
+            previous_line = line.line
+
     added_lines = [
         line
         for line in source_lines
-        if line.added and not _is_comment_line(line.text)
+        if line.added and code_text[id(line)].strip()
     ]
     context_lines = [
         line
         for line in source_lines
-        if not line.added and not _is_comment_line(line.text)
+        if not line.added and code_text[id(line)].strip()
     ]
     findings: list[Finding] = []
     seen: set[tuple[str, int, str]] = set()
@@ -304,30 +409,21 @@ def _scan_diff_lines(lines: Iterable[DiffLine]) -> list[Finding]:
 
     exception_lines: list[DiffLine] = []
     for line in added_lines:
-        if EXCEPTION_RE.search(line.text):
+        code = code_text[id(line)]
+        if EXCEPTION_RE.search(code):
             add(line, "exception-boundary")
-        if EXCEPTION_BODY_RE.search(line.text):
+        if EXCEPTION_BODY_RE.search(code):
             exception_lines.append(line)
-        if BROAD_EXCEPTION_RE.search(line.text):
+        if BROAD_EXCEPTION_RE.search(code):
             add(line, "broad-exception")
-        if INLINE_SWALLOW_RE.search(line.text):
+        if INLINE_SWALLOW_RE.search(code):
             add(line, "swallowed-exception")
-        if FALLBACK_RE.search(line.text):
-            add(line, "fallback-marker")
-        if PARALLEL_API_RE.search(line.text):
-            add(line, "parallel-api-name")
 
     # Context lines are used only to locate an existing exception boundary around
     # newly added handling code; they never become findings themselves.
     for line in context_lines:
-        if EXCEPTION_BODY_RE.search(line.text):
+        if EXCEPTION_BODY_RE.search(code_text[id(line)]):
             exception_lines.append(line)
-
-    by_path: dict[str, list[DiffLine]] = {}
-    for line in source_lines:
-        by_path.setdefault(line.path, []).append(line)
-    for path_lines in by_path.values():
-        path_lines.sort(key=lambda item: item.line)
 
     for boundary in exception_lines:
         saw_substantive_statement = False
@@ -338,7 +434,7 @@ def _scan_diff_lines(lines: Iterable[DiffLine]) -> list[Finding]:
                 continue
             if candidate.line > boundary.line + 5:
                 break
-            stripped = candidate.text.strip()
+            stripped = code_text[id(candidate)].strip()
             if not stripped:
                 continue
             if stripped == "}":

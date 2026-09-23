@@ -1,4 +1,0 @@
-interface:
-  display_name: "Reality-First Engineering"
-  short_description: "Verify reality before architecture or broad implementation"
-  default_prompt: "Use $reality-first-engineering to establish a bounded reality gate before implementation."

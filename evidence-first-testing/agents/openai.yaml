@@ -1,4 +1,0 @@
-interface:
-  display_name: "Evidence-First Testing"
-  short_description: "Preserve failure evidence before fixes and test changes"
-  default_prompt: "Use $evidence-first-testing to reproduce the failure, preserve red-state evidence, and verify the fix."
