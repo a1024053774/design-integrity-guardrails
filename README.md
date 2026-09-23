@@ -22,14 +22,12 @@
 | --- | --- | --- |
 | [`AGENTS.md`](AGENTS.md) | 项目级规则模板：项目事实、第二条生产路径、测试预算、复审触发 | 每个任务 |
 | [`design-integrity-review`](design-integrity-review/SKILL.md) | 冻结候选版本后的一次结构风险复审 | 完成检查点，或显式要求 |
-| [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为 | 验收表面改变时 |
+| [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为；Agent 产品另读 [agent-products](behavioral-acceptance-review/references/agent-products.md)，给出发布结论 | 验收表面改变或 Agent 产品发布时 |
 
 伴随 Skill 在各自仓库维护，本仓库不再复制：
 
 - `reality-first-engineering`、`evidence-first-testing` →
   [reality-evidence-engineering](https://github.com/a1024053774/reality-evidence-engineering)
-- `agent-acceptance-testing` →
-  [agent-acceptance-testing-skill](https://github.com/a1024053774/agent-acceptance-testing-skill)
 - 全部目录见 [agent-skills-index](https://github.com/a1024053774/agent-skills-index)
 
 每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。两个复审 Skill 都会在同类问题再次出现时，给出应写回项目指令的预防规则（闭环），但复审本身保持只读。

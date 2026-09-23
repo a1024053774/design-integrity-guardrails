@@ -1,6 +1,6 @@
 ---
 name: behavioral-acceptance-review
-description: Audit whether tests, evals, benchmarks, autoresearch tasks, generated artifacts, public APIs, or user-visible workflows provide independent behavioral evidence. Use at a completion checkpoint, not for ordinary implementation or documentation-only changes.
+description: Audit whether tests, evals, benchmarks, autoresearch tasks, generated artifacts, public APIs, or user-visible workflows provide independent behavioral evidence, including acceptance and release verdicts for model-driven Agent products. Use at a completion checkpoint, not for ordinary implementation or documentation-only changes.
 ---
 
 # Behavioral Acceptance Review
@@ -16,6 +16,12 @@ require evidence from that boundary (or clearly mark the result `INCOMPLETE`). A
 or simulator may prove pure logic, but it is not independent evidence of the boundary it
 replaces. Coordinate with the `reality-first-engineering` gate; do not recreate its ledger
 or turn this review into a second architecture exercise.
+
+## Agent products
+
+When the target is a model-driven Agent product, also read
+[references/agent-products.md](references/agent-products.md): the capability profile, evidence
+layers, weak assertions, severity, release verdict, and rules for automated judges.
 
 ## Establish independence
 
