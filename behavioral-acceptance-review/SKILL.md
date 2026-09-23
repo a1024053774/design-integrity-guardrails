@@ -62,6 +62,8 @@ COUNTEREXAMPLE:
 - <known-bad implementation or input and whether it is rejected>
 LIMITATIONS:
 - <missing oracle, environment, or coverage limitation>
+RULE:
+- <only when a finding repeats a known failure class: the prevention rule and where it belongs>
 ```
 
 `PASS` requires independent behavioral evidence. `FAIL` requires a reachable or

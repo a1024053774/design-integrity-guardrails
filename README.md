@@ -20,7 +20,7 @@
 
 | 部件 | 唯一职责 | 何时触发 |
 | --- | --- | --- |
-| [`AGENTS.md`](AGENTS.md) | 项目级常驻规则模板：范围、停止出口、测试预算 | 每个任务 |
+| [`AGENTS.md`](AGENTS.md) | 项目级规则模板：项目事实、第二条生产路径、测试预算、复审触发 | 每个任务 |
 | [`design-integrity-review`](design-integrity-review/SKILL.md) | 冻结候选版本后的一次结构风险复审 | 完成检查点，或显式要求 |
 | [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为 | 验收表面改变时 |
 
@@ -32,7 +32,7 @@
   [agent-acceptance-testing-skill](https://github.com/a1024053774/agent-acceptance-testing-skill)
 - 全部目录见 [agent-skills-index](https://github.com/a1024053774/agent-skills-index)
 
-每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。
+每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。两个复审 Skill 都会在同类问题再次出现时，给出应写回项目指令的预防规则（闭环），但复审本身保持只读。
 
 ## 工作协议
 
@@ -78,15 +78,19 @@ scanner 安静不等于 `PASS`；命中也不等于缺陷。
 ```bash
 git clone git@github.com:a1024053774/design-integrity-guardrails.git
 cd design-integrity-guardrails
-for tool in ~/.claude/skills ~/.codex/skills ~/.agents/skills; do
-  mkdir -p "$tool"
-  ln -sfn "$PWD/design-integrity-review" "$tool/design-integrity-review"
-  ln -sfn "$PWD/behavioral-acceptance-review" "$tool/behavioral-acceptance-review"
+for skill in design-integrity-review behavioral-acceptance-review; do
+  ln -sfn "$PWD/$skill" ~/.agents/skills/$skill        # Codex、Cursor、Gemini CLI、Factory 直接读这里
+  ln -sfn ~/.agents/skills/$skill ~/.claude/skills/$skill  # Claude Code 只读自己的目录
 done
 ```
 
-[AGENTS.md](AGENTS.md) 是项目版规则模板，不要整份复制到全局配置；全局
-`~/.claude/CLAUDE.md` / `~/.codex/AGENTS.md` 只保留跨项目个人默认。
+`~/.agents/skills` 是中心目录；不要再往 `~/.codex/skills` 或 `~/.cursor/skills` 里放同名链接，
+否则同一个 Skill 会出现两次。一次维护多个 Skill 时，用
+[agent-skills-index 的同步脚本](https://github.com/a1024053774/agent-skills-index)。
+
+[AGENTS.md](AGENTS.md) 是项目级模板，只写项目特有的规则。读够上下文、最小计划、授权边界、
+测试预算、状态词汇和 Skill 路由这类跨项目默认，放在全局 `~/.codex/AGENTS.md` /
+`~/.claude/CLAUDE.md`，模板里不重复，避免同一条规则加载两次、日后写法分叉。
 
 ### Acceptance auditor（Codex）
 

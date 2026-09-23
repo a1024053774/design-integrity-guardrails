@@ -48,3 +48,10 @@ concrete failure or maintenance cost, and the simpler correction. Return one of:
 - `INCOMPLETE` — snapshot, scope, or evidence unavailable.
 
 One review per candidate. After fixes, at most one targeted re-review of the changed scope.
+
+## Close the loop
+
+When a confirmed finding repeats a failure class this project has hit before, name the
+rule that would have prevented it and where it belongs: the project's `AGENTS.md` or the
+living doc that owns the area. Recommend it in the report; the review itself stays read-only.
+With a project map, the rule is added through a `task` ticket (see `project-map`).
