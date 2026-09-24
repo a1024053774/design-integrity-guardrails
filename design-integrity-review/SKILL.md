@@ -35,7 +35,9 @@ return `INCOMPLETE`. For each suspected risk, establish:
 
 - **Reachability** — the real caller, input, contract, or observed failure;
 - **Ownership** — whether this layer owns recovery, degradation, cleanup, or translation;
-- **Architecture** — why the existing abstraction cannot carry the correct behavior;
+- **Architecture** — why the existing abstraction cannot carry the correct behavior; a new
+  layer must be a **deep module** (a small interface hiding substantial implementation), so a
+  shallow pass-through wrapper or an interface with a single implementation is a finding;
 - **Proportion** — whether the change is limited to the root cause.
 
 ## Report
