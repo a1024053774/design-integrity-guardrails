@@ -30,7 +30,7 @@
   [reality-evidence-engineering](https://github.com/a1024053774/reality-evidence-engineering)
 - 全部目录见 [agent-skills-index](https://github.com/a1024053774/agent-skills-index)
 
-每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。两个复审 Skill 都会在同类问题再次出现时，给出应写回项目指令的预防规则（闭环），但复审本身保持只读。
+每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。两个复审 Skill 都会在同类问题再次出现时，给出能拦住它的检查（测试、lint 或依赖规则、脚本、hook）及运行位置；只有无法机器判定时，才给出应写回项目指令的文字规则并说明原因（闭环）。复审本身保持只读。
 
 ## 工作协议
 

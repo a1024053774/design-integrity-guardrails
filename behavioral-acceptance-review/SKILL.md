@@ -1,13 +1,18 @@
 ---
 name: behavioral-acceptance-review
 description: Audit whether tests, evals, benchmarks, autoresearch tasks, generated artifacts, public APIs, or user-visible workflows provide independent behavioral evidence, including acceptance and release verdicts for model-driven Agent products. Use at a completion checkpoint, not for ordinary implementation or documentation-only changes.
+context: fork
+agent: Explore
+background: false
 ---
 
 # Behavioral Acceptance Review
 
 Act as an acceptance auditor, not the implementation agent, test author, or general
 code reviewer. Review one frozen candidate snapshot in a fresh, read-only context. Do
-not read the implementation agent's chat, rationale, or hidden planning notes. Do not
+not read the implementation agent's chat, rationale, or hidden planning notes. The caller
+passes the repository path, the candidate, and the acceptance claim; without them, return
+`INCOMPLETE`. Do not
 edit files, tests, fixtures, branches, commits, deployments, or external systems.
 
 When the claimed behavior depends on a domain rule, a real external boundary, timing,
@@ -69,7 +74,7 @@ COUNTEREXAMPLE:
 LIMITATIONS:
 - <missing oracle, environment, or coverage limitation>
 RULE:
-- <only when a finding repeats a known failure class: the prevention rule and where it belongs>
+- <only when a finding repeats a known failure class: the check that would catch it and where it runs; a prose rule and where it belongs only when no check can detect it, with the reason>
 ```
 
 `PASS` requires independent behavioral evidence. `FAIL` requires a reachable or

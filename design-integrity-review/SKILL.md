@@ -1,12 +1,19 @@
 ---
 name: design-integrity-review
 description: Review one frozen candidate change for structural shortcuts — swallowed or broad exception handling, fallback/retry paths, compatibility branches, parallel APIs, and patches that bypass root-cause ownership — or route to behavioral-acceptance-review when an evaluation surface changed. Use once at a completion checkpoint; not for documentation-only, formatting-only, or routine test maintenance.
+context: fork
+agent: Explore
+background: false
 ---
 
 # Design Integrity Review
 
 A read-only, bounded structural review of one candidate change. Do not edit files, tests,
 commits, branches, or external systems while reviewing.
+
+Review in a fresh context. The caller passes the repository path and the candidate (a commit,
+a patch, or the working tree); do not rely on the implementing session's chat or rationale.
+Without a repository path and candidate, return `INCOMPLETE`.
 
 If the direction itself rests on unverified facts, send the work to
 `reality-first-engineering` first; this review does not rationalize an unverified design.
@@ -54,6 +61,8 @@ One review per candidate. After fixes, at most one targeted re-review of the cha
 ## Close the loop
 
 When a confirmed finding repeats a failure class this project has hit before, name the
-rule that would have prevented it and where it belongs: the project's `AGENTS.md` or the
-living doc that owns the area. Recommend it in the report; the review itself stays read-only.
-With a project map, the rule is added through a `task` ticket (see `project-map`).
+check that would have caught it (a test, a lint or dependency rule, a script, or a hook) and
+where it runs. Only when no check can detect the failure, name a prose rule instead, say why
+it cannot be checked, and where it belongs: the project's `AGENTS.md` or the living doc that
+owns the area. Recommend it in the report; the review itself stays read-only. With a project
+map, it is added through a `task` ticket (see `project-map`).
