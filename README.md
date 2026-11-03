@@ -21,7 +21,7 @@
 | 部件 | 唯一职责 | 何时触发 |
 | --- | --- | --- |
 | [`AGENTS.md`](AGENTS.md) | 项目级规则模板：项目事实、第二条生产路径、测试预算、复审触发 | 每个任务 |
-| [`design-integrity-review`](design-integrity-review/SKILL.md) | 冻结候选版本后的一次结构风险复审 | 完成检查点，或显式要求 |
+| [`design-integrity-review`](design-integrity-review/SKILL.md) | 实现 Agent 收尾时对自己改动的一次结构风险自查，不另起 reviewer | 完成检查点，或显式要求 |
 | [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为；Agent 产品另读 [agent-products](behavioral-acceptance-review/references/agent-products.md)，给出发布结论 | 验收表面改变或 Agent 产品发布时 |
 
 伴随 Skill 在各自仓库维护，本仓库不再复制：
@@ -30,7 +30,9 @@
   [reality-evidence-engineering](https://github.com/a1024053774/reality-evidence-engineering)
 - 全部目录见 [agent-skills-index](https://github.com/a1024053774/agent-skills-index)
 
-每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。两个复审 Skill 都会在同类问题再次出现时，给出能拦住它的检查（测试、lint 或依赖规则、脚本、hook）及运行位置；只有无法机器判定时，才给出应写回项目指令的文字规则并说明原因（闭环）。复审本身保持只读。
+每层只解决自己的失败模式，不要再组合成一个“大审查 Skill”。两个 Skill 都会在同类问题再次出现时，给出能拦住它的检查（测试、lint 或依赖规则、脚本、hook）及运行位置；只有无法机器判定时，才给出应写回项目指令的文字规则并说明原因（闭环）。行为验收复审保持只读；结构自查由实现 Agent 直接修正已确认的问题。
+
+只有行为验收用独立上下文：它的价值在于不继承实现者的 oracle，每条 `FAIL` 都要附实际跑过的反例。结构问题的可达性和归属要结合任务的目标与非目标判断，交给只拿到仓库和候选的 reviewer，容易变成脱离意图的挑刺，所以改成实现 Agent 自查。
 
 ## 工作协议
 
@@ -47,11 +49,13 @@
           └─ PASS ─────────────────► 最小实现 → 相关现有测试与证据
                                                   │
                                                   ▼
-                       完成检查点：design-integrity-review 一次
-                       （验收表面改变 → behavioral-acceptance-review）
+                       完成检查点：design-integrity-review 自查一次
+                       （验收表面改变 → behavioral-acceptance-review 独立复审）
 ```
 
-同一回答中的多次迭代不重复启动 reviewer；新证据推翻方向时才重新开始。
+同一回答中的多次迭代不重复自查或复审；新证据推翻方向时才重新开始。复审发现同一条不变式
+又被新的反例打破时，返回 `needs model`，不再开新一轮复审：先写出不变式，再在小范围内系统地
+搜索（见 `evidence-first-testing` 的顺序契约）。
 
 ## 结构风险扫描
 
@@ -63,7 +67,8 @@
 - 异常后无证据的默认返回。
 
 `fallback`、`V2`、`Compat` 等标识符不算行为证据。fallback、兼容路径和并行 API 仍是
-复审时要核实的设计问题，但由 reviewer 按可达控制流判断，而不是按名字命中。
+自查时要核实的设计问题，但要按可达控制流判断，而不是按名字命中。scanner 只比较工作区和
+`HEAD`，看不到已经提交的改动，所以要在提交前运行。
 
 ```bash
 python3 design-integrity-review/scripts/design_integrity.py --cwd <repo> --format json
@@ -103,8 +108,9 @@ review epoch 预算强制复审，用来阻止 Agent 反复拉起、轮询、重
 大型集成实例中旧流程约有 11 次 spawn、60 次 wait，耗时约 23 小时。
 
 当前模型和 Agent 运行时默认不会自行派生 reviewer，而改成 advisory 模式后 hook 只写
-状态文件、没有任何调用方消费。因此移除了 hook 及其状态机，只保留 Skill 中“每个候选
-版本一次复审、最多一次定向复审”的规则。旧实现可在 git 历史中找到。
+状态文件、没有任何调用方消费。因此移除了 hook 及其状态机，只在 Skill 里保留次数规则：
+结构自查每个完成检查点一次；行为验收复审在同一不变式再次被打破时返回 `needs model`，
+不再继续找反例。旧实现可在 git 历史中找到。
 
 ## 已知边界
 
