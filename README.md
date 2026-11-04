@@ -1,8 +1,7 @@
 # Design-Integrity Guardrails
 
 一套给 Codex、Claude Code 和兼容 Agent 使用的轻量工程约束，目标是让 Agent 完成
-**满足验收条件的最小改动**，而不是把每个任务扩展成框架、适配器层和一套新测试
-基础设施。
+**满足验收条件的最小改动**，而不是把每个任务扩展成框架、适配器层和一套新测试基础设施。
 
 ## 它解决什么问题
 
@@ -13,8 +12,7 @@
 - 用更多测试、配置和文档制造“看起来专业”的完成感；
 - 只看局部绿色测试，没有验证真实入口、真实输入和独立 oracle。
 
-没有证据时，`BLOCKED`/`INCOMPLETE` 是合法结果，不需要用 fallback、mock-only 分支或
-更多文档掩盖。
+没有证据时，`BLOCKED`/`INCOMPLETE` 是合法结果，不需要用 fallback、mock-only 分支或更多文档掩盖。
 
 ## 组成
 
@@ -36,13 +34,11 @@
 
 ### 为什么两个审查都用干净上下文
 
-实现者自己审自己，等于自己批改自己的作业：它会沿用写代码时的理由，证明代码是对的。
-2026-11-03 曾把结构审查改成实现 Agent 收尾自查，理由是“只拿到仓库和候选的 reviewer
+实现者自己审自己，等于自己批改自己的作业：它会沿用写代码时的理由，证明代码是对的。2026-11-03 曾把结构审查改成实现 Agent 收尾自查，理由是“只拿到仓库和候选的 reviewer
 会脱离意图挑刺”。真正缺的是意图，不是实现者的上下文，所以现在的做法是：
 
 - 调用方传入目标、非目标和验收条件，不传实现理由；
-- 每条 `FAIL` 要附一个能走到被标代码的输入，只靠读代码推出的问题写进 LIMITATIONS，
-  用“may”表述，不能写成事实；
+- 每条 `FAIL` 要附一个能走到被标代码的输入，只靠读代码推出的问题写进 LIMITATIONS，用“may”表述，不能写成事实；
 - 不是本次改动引入的问题标 `[pre-existing]`，不阻断本次，单独开票；
 - 标出问题的类别并列出全部实例，已经报过的问题不再重复报；
 - 报告第一行给状态，第二行先给数量，没有问题就写 `No findings.`。
@@ -72,10 +68,7 @@
                        合入点：全量测试；仓库有 CI 时交给 CI，本地不重复
 ```
 
-同一回答中的多次迭代不重复审查；新证据推翻方向时才重新开始。修完后最多对改动范围做一次
-定向复审。复审发现同一条不变式
-又被新的反例打破时，返回 `needs model`，不再开新一轮复审：先写出不变式，再在小范围内系统地
-搜索（见 `evidence-first-testing` 的顺序契约）。
+同一回答中的多次迭代不重复审查；新证据推翻方向时才重新开始。修完后最多对改动范围做一次定向复审。复审发现同一条不变式又被新的反例打破时，返回 `needs model`，不再开新一轮复审：先写出不变式，再在小范围内系统地搜索（见 `evidence-first-testing` 的顺序契约）。
 
 ## 结构风险扫描
 
@@ -87,16 +80,13 @@
 - 异常后无证据的默认返回；
 - `acceptance_changes`：从基线到现在被改动的验收面文件，以及判定来源（`REVIEW.md` 或目录约定）。
 
-`fallback`、`V2`、`Compat` 等标识符不算行为证据。fallback、兼容路径和并行 API 仍是
-审查时要核实的设计问题，但要按可达控制流判断，而不是按名字命中。“断言是否被放宽”这类
-判断也不在 scanner 里做，交给验收复审。
+`fallback`、`V2`、`Compat` 等标识符不算行为证据。fallback、兼容路径和并行 API 仍是审查时要核实的设计问题，但要按可达控制流判断，而不是按名字命中。“断言是否被放宽”这类判断也不在 scanner 里做，交给验收复审。
 
 ```bash
 python3 design-integrity-review/scripts/design_integrity.py --cwd <repo> --base <起点提交> --format json
 ```
 
-只比较工作区和 `HEAD` 时，会话中途已经提交的改动会从 diff 里消失，所以审查和 hook 都传
-会话起点的提交。scanner 安静不等于 `PASS`；命中也不等于缺陷。
+只比较工作区和 `HEAD` 时，会话中途已经提交的改动会从 diff 里消失，所以审查和 hook 都传会话起点的提交。scanner 安静不等于 `PASS`；命中也不等于缺陷。
 
 ## REVIEW.md 与验收面冻结
 
@@ -117,12 +107,10 @@ python3 design-integrity-review/scripts/design_integrity.py --cwd <repo> --base 
 
 - `**` 跨目录，`*` 和 `?` 只在一层目录内匹配；不带通配符或以 `/` 结尾的路径覆盖其下所有文件。
 - `REVIEW.md` 本身始终是验收面：删掉一条 glob 也算改需求。
-- 没有这一节时，退回目录约定：路径中某一级目录名是 `acceptance`、`autoresearch`、
-  `benchmark(s)`、`eval(s)`、`golden`、`grader(s)`、`harness` 或 `oracle`。
+- 没有这一节时，退回目录约定：路径中某一级目录名是 `acceptance`、`autoresearch`、`benchmark(s)`、`eval(s)`、`golden`、`grader(s)`、`harness` 或 `oracle`。
 - 这一节存在但为空，表示仓库没有验收面（`REVIEW.md` 自身除外）。
 
-`REVIEW.md` 的其余几节（敏感路径、各区域失败长什么样、跳过的路径）给两个审查 Skill 读。
-它由代码负责人写；`review-md` 负责起草，只在用户点名时运行。
+`REVIEW.md` 的其余几节（敏感路径、各区域失败长什么样、跳过的路径）给两个审查 Skill 读。它由代码负责人写；`review-md` 负责起草，只在用户点名时运行。
 
 ## 安装
 
@@ -135,12 +123,10 @@ for skill in design-integrity-review behavioral-acceptance-review review-md; do
 done
 ```
 
-`~/.agents/skills` 是中心目录；不要再往 `~/.codex/skills` 或 `~/.cursor/skills` 里放同名链接，
-否则同一个 Skill 会出现两次。一次维护多个 Skill 时，用
+`~/.agents/skills` 是中心目录；不要再往 `~/.codex/skills` 或 `~/.cursor/skills` 里放同名链接，否则同一个 Skill 会出现两次。一次维护多个 Skill 时，用
 [agent-skills-index 的同步脚本](https://github.com/a1024053774/agent-skills-index)。
 
-[AGENTS.md](AGENTS.md) 是项目级模板，只写项目特有的规则。读够上下文、最小计划、授权边界、
-测试预算、状态词汇和 Skill 路由这类跨项目默认，放在全局 `~/.codex/AGENTS.md` /
+[AGENTS.md](AGENTS.md) 是项目级模板，只写项目特有的规则。读够上下文、最小计划、授权边界、测试预算、状态词汇和 Skill 路由这类跨项目默认，放在全局 `~/.codex/AGENTS.md` /
 `~/.claude/CLAUDE.md`，模板里不重复，避免同一条规则加载两次、日后写法分叉。
 
 ### Acceptance auditor（Codex）
@@ -151,16 +137,11 @@ done
 
 ## Hook：只调用脚本
 
-检查逻辑只在 `design_integrity.py` 里维护一份，所有 harness 都读同一个脚本；hook 只负责在
-合适的时机调用它。Stop hook 是
-[agent-skills-index/hooks/stop_checks.py](https://github.com/a1024053774/agent-skills-index/tree/main/hooks)，
-Claude Code 和 Codex 用同一份：
+检查逻辑只在 `design_integrity.py` 里维护一份，所有 harness 都读同一个脚本；hook 只负责在合适的时机调用它。Stop hook 是
+[agent-skills-index/hooks/stop_checks.py](https://github.com/a1024053774/agent-skills-index/tree/main/hooks)，Claude Code 和 Codex 用同一份：
 
-- **SessionStart**：把当前 `HEAD` 记到 `<git-dir>/agent-session-base/<session_id>`。只写一次，
-  恢复会话时保留原来的起点。
-- **Stop**：用记下的起点调用 scanner（没有记录时退回 `HEAD`）。新增的异常边界和被改动的
-  验收面各阻断一次，模型要在续跑中改回，或在回复里说明用户要求或批准了这次改动。
-  `stop_hook_active` 为真时不再阻断，避免循环。
+- **SessionStart**：把当前 `HEAD` 记到 `<git-dir>/agent-session-base/<session_id>`。只写一次，恢复会话时保留原来的起点。
+- **Stop**：用记下的起点调用 scanner（没有记录时退回 `HEAD`）。新增的异常边界和被改动的验收面各阻断一次，模型要在续跑中改回，或在回复里说明用户要求或批准了这次改动。`stop_hook_active` 为真时不再阻断，避免循环。
 
 Claude Code 在 `~/.claude/settings.json` 的 `SessionStart` 和 `Stop` 下各挂一条
 `python3 ~/.claude/hooks/stop_checks.py`。Codex（0.164.0 实测）在 `~/.codex/hooks.json`
@@ -168,9 +149,7 @@ Claude Code 在 `~/.claude/settings.json` 的 `SessionStart` 和 `Stop` 下各�
 Codex 里信任一次，hook 命令改了还要重新信任。
 
 早期版本带一个 `integrity_hook.py`，在 `PreToolUse`/`Stop` 上按 turn 和 review epoch
-预算强制复审，用来阻止 Agent 反复拉起、轮询、重启 reviewer。一个真实大型集成实例中旧流程
-约有 11 次 spawn、60 次 wait，耗时约 23 小时。当前运行时默认不会自行派生 reviewer，那套
-状态机已经删除，次数规则留在 Skill 里：每个完成检查点审查一次；同一不变式再次被打破时返回
+预算强制复审，用来阻止 Agent 反复拉起、轮询、重启 reviewer。一个真实大型集成实例中旧流程约有 11 次 spawn、60 次 wait，耗时约 23 小时。当前运行时默认不会自行派生 reviewer，那套状态机已经删除，次数规则留在 Skill 里：每个完成检查点审查一次；同一不变式再次被打破时返回
 `needs model`。旧实现可在 git 历史中找到。
 
 ## 已知边界
