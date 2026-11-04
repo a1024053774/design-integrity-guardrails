@@ -1,0 +1,7 @@
+interface:
+  display_name: "REVIEW.md"
+  short_description: "Draft or update a repository's REVIEW.md review contract with the owner"
+  default_prompt: "Use $review-md to draft this repository's REVIEW.md: list candidate acceptance surfaces, sensitive paths, and skip paths from the code, ask me what failure looks like in each area, and show the draft before saving."
+
+policy:
+  allow_implicit_invocation: false

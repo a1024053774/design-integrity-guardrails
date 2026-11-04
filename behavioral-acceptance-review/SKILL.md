@@ -16,6 +16,11 @@ non-goals (`none` when there are none); without them, return `INCOMPLETE`. A vio
 that falls under a non-goal is not a finding. Do not
 edit files, tests, fixtures, branches, commits, deployments, or external systems.
 
+When the repository root has a `REVIEW.md`, read it first. Its `Acceptance surfaces` are frozen
+during implementation: a change to one in the candidate is a finding unless the caller states
+that the user asked for it or approved it, because changing it changes the requirement. Its
+other sections say what failure looks like in each area and which paths to skip.
+
 When the claimed behavior depends on a domain rule, a real external boundary, timing,
 data semantics, permissions, deployment, or another condition that a mock cannot establish,
 require evidence from that boundary (or clearly mark the result `INCOMPLETE`). A host mock
@@ -72,11 +77,12 @@ Return exactly:
 
 ```text
 STATUS: PASS | FAIL | INCOMPLETE
+SUMMARY: <number of findings by severity and how many are pre-existing, or "No findings.">
 TARGET: <frozen candidate or revision>
 EVIDENCE:
 - <input, command, result, or contract>
 FINDINGS:
-- [P1/P2/P3] <exact file and line> — <failure, the command and input that reproduced it, and simpler correction>
+- [P1/P2/P3 | pre-existing] <exact file and line> — <class>: <failure, the command and input that reproduced it, and simpler correction>
 COUNTEREXAMPLE:
 - <known-bad implementation or input and whether it is rejected>
 LIMITATIONS:
@@ -91,3 +97,9 @@ violation argued only from reading the code goes under LIMITATIONS as unverified
 input or event order that would show it; on its own it makes the status `INCOMPLETE`, not
 `FAIL`. Use `INCOMPLETE` when the snapshot, external input, oracle, or
 required environment is unavailable. Never turn `INCOMPLETE` into `PASS` by guessing.
+
+Keep the modality of an unverified violation: write "may", never state it as a fact. This is
+the same rule as listing it as unverified. Tag a violation in code the candidate did not
+introduce `[pre-existing]`; it does not change the status. Name the class of a violation and
+list every instance you reproduced, not only the first. Do not repeat a finding that an
+earlier report for the same work already lists; check only whether it was fixed.

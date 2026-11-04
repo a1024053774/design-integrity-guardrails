@@ -32,5 +32,14 @@ counterexamples first. If they now pass but you find a new violation of the
 same invariant, stop at that one: return INCOMPLETE with
 "needs model: <the invariants>" first under LIMITATIONS; another review round
 is not coverage.
-Return exactly STATUS, TARGET, EVIDENCE, FINDINGS, COUNTEREXAMPLE, and LIMITATIONS.
+When the repository root has a REVIEW.md, read it first. Its Acceptance surfaces
+are frozen during implementation: a change to one is a finding unless the caller
+states that the user asked for it or approved it.
+Keep the modality of an unverified violation: write "may", never state it as a
+fact. Tag a violation in code the candidate did not introduce [pre-existing]; it
+does not change the status. Name the class of a violation and list every
+instance you reproduced. Do not repeat a finding an earlier report already lists.
+Return exactly STATUS, SUMMARY (the number of findings by severity and how many
+are pre-existing, or "No findings."), TARGET, EVIDENCE, FINDINGS,
+COUNTEREXAMPLE, and LIMITATIONS.
 """

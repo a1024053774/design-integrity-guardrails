@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -53,6 +52,10 @@ ACCEPTANCE_PARTS = {
     "harness",
     "oracle",
 }
+REVIEW_FILE = "REVIEW.md"
+ACCEPTANCE_HEADING_RE = re.compile(r"^#{1,6}\s+acceptance surfaces\s*$", re.IGNORECASE)
+HEADING_RE = re.compile(r"^#{1,6}\s")
+GLOB_ITEM_RE = re.compile(r"^\s*[-*+]\s+(?:`([^`]+)`|(\S+))")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 DIFF_PATH_RE = re.compile(r"^diff --git a/(.+) b/(.+)$")
 EXCEPTION_RE = re.compile(
@@ -201,7 +204,81 @@ def changed_paths_from_diff(diff: str) -> list[str]:
     return paths
 
 
-def _is_acceptance_path(path: str) -> bool:
+def parse_acceptance_globs(review_text: str) -> list[str] | None:
+    """Return the globs listed under the ``Acceptance surfaces`` heading of REVIEW.md.
+
+    ``None`` means the file has no such section, so the directory convention applies.
+    An empty list means the owner declared that the repository has no acceptance
+    surface. Only list items whose first token is in backticks or looks like a path
+    (contains ``/``, ``*``, or ``.``) count; a prose bullet is not a glob.
+    """
+    globs: list[str] | None = None
+    for raw_line in review_text.splitlines():
+        if ACCEPTANCE_HEADING_RE.match(raw_line.strip()):
+            globs = []
+            continue
+        if globs is None:
+            continue
+        if HEADING_RE.match(raw_line):
+            break
+        match = GLOB_ITEM_RE.match(raw_line)
+        if not match:
+            continue
+        token = match.group(1) or match.group(2)
+        if match.group(1) or any(mark in token for mark in "/*."):
+            globs.append(token.strip())
+    return globs
+
+
+def load_acceptance_globs(root: Path) -> list[str] | None:
+    review = root / REVIEW_FILE
+    if not review.is_file():
+        return None
+    return parse_acceptance_globs(review.read_text(encoding="utf-8"))
+
+
+def _glob_regex(glob: str) -> re.Pattern[str]:
+    """Translate a REVIEW.md glob: ``**`` crosses directories, ``*`` and ``?`` do not.
+
+    A glob without a wildcard names a file or a directory, so it also matches
+    everything below it; a trailing ``/`` means the same.
+    """
+    pattern = glob[2:] if glob.startswith("./") else glob
+    pattern = pattern.lstrip("/")
+    if pattern.endswith("/"):
+        pattern = pattern.rstrip("/")
+        has_wildcard = False
+    else:
+        has_wildcard = any(mark in pattern for mark in "*?")
+    out: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            out.append("[^/]")
+            index += 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    suffix = r"\Z" if has_wildcard else r"(?:/.*)?\Z"
+    return re.compile("".join(out) + suffix)
+
+
+def _is_acceptance_path(path: str, globs: list[str] | None = None) -> bool:
+    # REVIEW.md declares what is frozen, so editing it is itself a requirement change;
+    # otherwise an agent could drop a glob and then edit the test it protected.
+    if path == REVIEW_FILE:
+        return True
+    if globs is not None:
+        return any(_glob_regex(glob).match(path) for glob in globs)
     parts = {part.lower() for part in PurePosixPath(path).parts}
     # A conventional directory is an explicit repository routing policy. A
     # filename such as ``model_acceptance.py`` is not enough to establish that
@@ -209,36 +286,22 @@ def _is_acceptance_path(path: str) -> bool:
     return bool(parts & ACCEPTANCE_PARTS)
 
 
-def acceptance_paths_from_diff(diff: str) -> list[str]:
-    return [path for path in changed_paths_from_diff(diff) if _is_acceptance_path(path)]
+def acceptance_paths_from_diff(diff: str, globs: list[str] | None = None) -> list[str]:
+    """Changed paths that are acceptance surfaces.
 
-
-def acceptance_diff_digest(diff: str) -> str:
-    """Return a stable digest for changed explicit acceptance-surface sections."""
-    chunks: list[str] = []
-    current_path: str | None = None
-    include = False
-    for raw_line in diff.splitlines():
-        match = DIFF_PATH_RE.match(raw_line)
-        if match:
-            old_path, current_path = match.groups()
-            include = _is_acceptance_path(old_path) or _is_acceptance_path(current_path)
-        if include:
-            chunks.append(raw_line)
-    if not chunks:
-        return ""
-    return hashlib.sha256("\n".join(chunks).encode("utf-8")).hexdigest()
-
-
-def requires_acceptance_review(diff: str) -> bool:
-    """Return whether a diff belongs to a high-risk acceptance surface.
-
-    Automatic routing is limited to conventional evaluation-directory components.
-    Ordinary unit-test edits remain covered by evidence-first testing without
-    starting a model review; callers can invoke the acceptance skill explicitly
-    for other behavioral work.
+    ``globs`` comes from REVIEW.md and replaces the directory convention when given.
     """
-    return bool(acceptance_paths_from_diff(diff))
+    return [path for path in changed_paths_from_diff(diff) if _is_acceptance_path(path, globs)]
+
+
+def requires_acceptance_review(diff: str, globs: list[str] | None = None) -> bool:
+    """Return whether a diff touches an acceptance surface.
+
+    Without REVIEW.md, automatic routing is limited to conventional
+    evaluation-directory components. Ordinary unit-test edits remain covered by
+    evidence-first testing without starting a model review.
+    """
+    return bool(acceptance_paths_from_diff(diff, globs))
 
 
 def _indentation(text: str) -> int:
@@ -589,15 +652,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--format", choices=("json", "text"), default="text")
+    parser.add_argument(
+        "--base",
+        help="revision to compare the working tree with, such as the commit the session "
+        "started from (default: HEAD, which cannot see changes already committed)",
+    )
     args = parser.parse_args()
 
-    root, findings = scan_worktree(args.cwd)
+    root, diff = collect_worktree_diff(args.cwd, args.base)
+    findings = scan_unified_diff(diff)
+    globs = load_acceptance_globs(root) if root else None
+    acceptance = acceptance_paths_from_diff(diff, globs)
+    source = REVIEW_FILE if globs is not None else "directory convention"
     if args.format == "json":
         print(
             json.dumps(
                 {
                     "root": str(root) if root else None,
+                    "base": args.base or "HEAD",
                     "findings": [finding.to_dict() for finding in findings],
+                    "acceptance_changes": acceptance,
+                    "acceptance_source": source,
                 },
                 ensure_ascii=False,
             )
@@ -605,6 +680,8 @@ def main() -> int:
     else:
         for finding in findings:
             print(f"{finding.path}:{finding.line}: {finding.kind}: {finding.text}")
+        for path in acceptance:
+            print(f"{path}: acceptance-surface ({source})")
     return 0
 
 

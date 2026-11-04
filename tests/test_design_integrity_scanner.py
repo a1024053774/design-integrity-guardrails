@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from design_integrity import (
     acceptance_paths_from_diff,
+    parse_acceptance_globs,
     requires_acceptance_review,
     scan_unified_diff,
 )  # noqa: E402
@@ -311,6 +312,81 @@ class ScannerPrecisionTests(unittest.TestCase):
             ["autoresearch/run.py"],
             acceptance_paths_from_diff(diff),
         )
+
+
+class ReviewFileAcceptanceTests(unittest.TestCase):
+    """REVIEW.md declares the acceptance surfaces.
+
+    Ways this could fail, written before the parser:
+    A1 a prose bullet in the section becomes a glob that matches nothing or everything;
+    A2 the section runs into the next heading and picks up its bullets;
+    A3 `*` crosses a directory, so `golden/*.json` freezes `golden/sub/a.json`;
+    A4 `**` fails to cross directories, so `tests/e2e/**` misses nested files;
+    A5 a bare directory or a trailing `/` matches only the exact path, not files below it;
+    A6 a prefix match freezes a sibling (`tests/e2e` also freezing `tests/e2e_old/x`);
+    A7 REVIEW.md without the section disables the directory convention;
+    A8 a declared section still falls back to the convention for unlisted paths;
+    A9 an edit to REVIEW.md itself passes, so dropping a glob unfreezes its test.
+    """
+
+    REVIEW = """\
+# REVIEW.md
+
+## Acceptance surfaces
+
+Frozen during implementation. Changing one changes the requirement.
+
+- `tests/e2e/**` — checkout flow
+- golden/*.json
+- fixtures/acceptance/
+- `docs/contract.md`
+
+## Skip
+
+- `generated/**`
+"""
+
+    @staticmethod
+    def _diff(*paths: str) -> str:
+        lines = []
+        for path in paths:
+            lines += [f"diff --git a/{path} b/{path}", f"--- a/{path}", f"+++ b/{path}", "@@ -1 +1 @@", "+x"]
+        return "\n".join(lines)
+
+    def test_section_lists_only_path_items_until_next_heading(self) -> None:  # A1, A2
+        self.assertEqual(
+            ["tests/e2e/**", "golden/*.json", "fixtures/acceptance/", "docs/contract.md"],
+            parse_acceptance_globs(self.REVIEW),
+        )
+
+    def test_missing_section_means_convention(self) -> None:  # A7
+        self.assertIsNone(parse_acceptance_globs("# REVIEW.md\n\n## Skip\n\n- `vendor/**`\n"))
+
+    def test_glob_semantics(self) -> None:  # A3-A6, A8
+        globs = parse_acceptance_globs(self.REVIEW)
+        frozen = [
+            "tests/e2e/checkout.spec.ts",
+            "tests/e2e/flows/pay/refund.spec.ts",
+            "golden/out.json",
+            "fixtures/acceptance/case1/input.txt",
+            "docs/contract.md",
+        ]
+        free = [
+            "golden/sub/out.json",
+            "tests/e2e_old/x.spec.ts",
+            "tests/unit/test_cart.py",
+            "docs/contract.md.bak",
+            "eval/score.py",
+            "generated/api.ts",
+        ]
+        self.assertEqual(frozen, acceptance_paths_from_diff(self._diff(*frozen, *free), globs))
+
+    def test_empty_section_freezes_nothing_but_review_file(self) -> None:  # A8, A9
+        globs = parse_acceptance_globs("## Acceptance surfaces\n\nNone yet.\n")
+        self.assertEqual([], globs)
+        self.assertFalse(requires_acceptance_review(self._diff("eval/score.py"), globs))
+        self.assertEqual(["REVIEW.md"], acceptance_paths_from_diff(self._diff("REVIEW.md", "docs/REVIEW.md"), globs))
+        self.assertEqual(["REVIEW.md"], acceptance_paths_from_diff(self._diff("REVIEW.md"), None))
 
 
 if __name__ == "__main__":
