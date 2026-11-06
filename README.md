@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | [`AGENTS.md`](AGENTS.md) | 项目级规则模板：项目事实（含全量测试命令、CI 是否跑全量）、第二条生产路径、测试预算、复审触发 | 每个任务 |
 | [`design-integrity-review`](design-integrity-review/SKILL.md) | 在干净上下文里按任务契约（目标、非目标、验收条件）对一个候选改动做一次结构风险审查 | 完成检查点 |
-| [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为；Agent 产品另读 [agent-products](behavioral-acceptance-review/references/agent-products.md)，给出发布结论 | 验收面改变或 Agent 产品发布时 |
+| [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为；Agent 产品另读 [agent-products](behavioral-acceptance-review/references/agent-products.md)，给出发布结论 | 候选冻结后：长时间或昂贵的运行、发布之前；验收面改变；Agent 产品验收或发布；用户要求时 |
 | [`review-md`](review-md/SKILL.md) | 起草或更新仓库的 `REVIEW.md`：先扫出候选，只问代码答不出的问题，负责人批准后才保存 | 只在用户点名时 |
 | [`scripts/design_integrity.py`](design-integrity-review/scripts/design_integrity.py) | 只回答事实问题：自会话起点以来新增的异常边界、被改动的验收面 | 审查时手动跑；Stop hook 每轮自动跑 |
 
@@ -62,7 +62,7 @@
                                                   │
                                                   ▼
                        完成检查点：design-integrity-review（干净上下文，一次）
-                       （验收面改变 → behavioral-acceptance-review）
+                       （验收面改变，或长时间、昂贵的运行和发布之前 → behavioral-acceptance-review）
                                                   │
                                                   ▼
                        合入点：全量测试；仓库有 CI 时交给 CI，本地不重复

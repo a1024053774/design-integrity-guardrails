@@ -1,6 +1,6 @@
 ---
 name: behavioral-acceptance-review
-description: Audit whether tests, evals, benchmarks, autoresearch tasks, generated artifacts, public APIs, or user-visible workflows provide independent behavioral evidence, including acceptance and release verdicts for model-driven Agent products. Use at a completion checkpoint, not for ordinary implementation or documentation-only changes.
+description: Audit whether tests, evals, benchmarks, autoresearch tasks, generated artifacts, public APIs, or user-visible workflows provide independent behavioral evidence, including acceptance and release verdicts for model-driven Agent products. Use once the candidate is frozen (tests run, committed when the task allows it), before a long or costly run or a release relies on that evidence, when an acceptance surface changed, or when the user asks; not at every completion checkpoint, and not for drafts, ordinary implementation, or documentation-only changes.
 context: fork
 agent: Explore
 background: false
