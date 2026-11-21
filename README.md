@@ -22,7 +22,7 @@
 | [`design-integrity-review`](design-integrity-review/SKILL.md) | 在干净上下文里按任务契约（目标、非目标、验收条件）对一个候选改动做一次结构风险审查 | 完成检查点 |
 | [`behavioral-acceptance-review`](behavioral-acceptance-review/SKILL.md) | 验证测试/eval 是否独立证明行为；Agent 产品另读 [agent-products](behavioral-acceptance-review/references/agent-products.md)，给出发布结论 | 候选冻结后：长时间或昂贵的运行、发布之前；验收面改变；Agent 产品验收或发布；用户要求时 |
 | [`review-md`](review-md/SKILL.md) | 起草或更新仓库的 `REVIEW.md`：先扫出候选，只问代码答不出的问题，负责人批准后才保存 | 只在用户点名时 |
-| [`scripts/design_integrity.py`](design-integrity-review/scripts/design_integrity.py) | 只回答事实问题：自会话起点以来新增的异常边界、被改动的验收面 | 审查时手动跑；Stop hook 每轮自动跑 |
+| [`scripts/design_integrity.py`](design-integrity-review/scripts/design_integrity.py) | 只回答事实问题：自会话起点以来新增的异常边界、被改动的验收面 | 审查时手动跑；Stop hook 每轮自动跑，只用验收面结果 |
 
 伴随 Skill 在各自仓库维护，本仓库不再复制：
 
@@ -58,7 +58,7 @@
           ├─ NO_GO ────────────────► 证据否定了方向，报告并换方向
           └─ PASS ─────────────────► 最小实现 → 覆盖本次改动的测试
                                                   │
-                    每次 Stop：hook 跑 scanner，新增异常边界或验收面改动各阻断一次
+                    每次 Stop：hook 跑 scanner，验收面改动阻断一次；异常边界留到完成检查点
                                                   │
                                                   ▼
                        完成检查点：design-integrity-review（干净上下文，一次）
@@ -141,7 +141,7 @@ done
 [agent-skills-index/hooks/stop_checks.py](https://github.com/a1024053774/agent-skills-index/tree/main/hooks)，Claude Code 和 Codex 用同一份：
 
 - **SessionStart**：把当前 `HEAD` 记到 `<git-dir>/agent-session-base/<session_id>`。只写一次，恢复会话时保留原来的起点。
-- **Stop**：用记下的起点调用 scanner（没有记录时退回 `HEAD`）。新增的异常边界和被改动的验收面各阻断一次，模型要在续跑中改回，或在回复里说明用户要求或批准了这次改动。`stop_hook_active` 为真时不再阻断，避免循环。
+- **Stop**：用记下的起点调用 scanner（没有记录时退回 `HEAD`），只用其中的验收面结果。被改动的验收面阻断一次，模型要在续跑中改回，或在回复里说明用户要求或批准了这次改动。`stop_hook_active` 为真时不再阻断，避免循环。
 
 Claude Code 在 `~/.claude/settings.json` 的 `SessionStart` 和 `Stop` 下各挂一条
 `python3 ~/.claude/hooks/stop_checks.py`。Codex（0.164.0 实测）在 `~/.codex/hooks.json`
@@ -152,11 +152,14 @@ Codex 里信任一次，hook 命令改了还要重新信任。
 预算强制复审，用来阻止 Agent 反复拉起、轮询、重启 reviewer。一个真实大型集成实例中旧流程约有 11 次 spawn、60 次 wait，耗时约 23 小时。当前运行时默认不会自行派生 reviewer，那套状态机已经删除，次数规则留在 Skill 里：每个完成检查点审查一次；同一不变式再次被打破时返回
 `needs model`。旧实现可在 git 历史中找到。
 
+Stop hook 以前还会对每个新增的异常边界阻断一次。7 周的 Claude Code 会话记录里，这项检查阻断 118 次、标出 1618 处，因它而改的只有 1 处真缺陷和 3 处收窄，却占了全部阻断引发的续跑 token 的一半以上。逐个追问“这个 catch 该不该留”收益很低；值得做的是在完成检查点把新代码完整审一次，这正是 design-integrity-review 的职责。所以现在 hook 只用 scanner 的验收面结果。
+
 ## 已知边界
 
 - scanner 是正则定位器，可能漏掉未命名的复杂度，也可能命中合法结构。
 - 验收面冻结只看路径：改到验收面就阻断，不判断改动是否合理；合理的需求变更由用户确认。
 - 没有记录会话起点时（例如 hook 晚于会话开始安装），scanner 退回 `HEAD`，看不到已提交的改动。
+- 会话起点按提交记录：会话中快进合并或切换分支带进来的提交，也算本会话的改动，可能误报验收面改动。阻断记录按仓库共用，两个基线不同的会话交替停下时，已经报过的项可能再报一次。
 - 最终行为仍需项目自己的黑盒测试、CI 或真实入口。
 - `BLOCKED`/`INCOMPLETE` 不会被自动重试成 `PASS`。
 
