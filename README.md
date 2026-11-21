@@ -135,6 +135,10 @@ done
 [examples/acceptance-auditor.toml.example](examples/acceptance-auditor.toml.example) 复制到
 `~/.codex/agents/acceptance-auditor.toml`，只在本地填入私有模型路由。
 
+### Explore 配置（Devin）
+
+两个审查 Skill 的 frontmatter 写的是 `agent: Explore`，指 Claude Code 内置的只读 Agent。Devin 没有同名配置，调用会报 `Unknown subagent profile 'Explore'`。在 Devin 里使用时（Devin CLI 3000.14 实测），把 [examples/devin-explore-agent.md](examples/devin-explore-agent.md) 链接或复制到 `~/.config/devin/agents/Explore.md`，给 Devin 补一个只读、能跑 shell 的同名配置；Skill 本身不用改，Claude Code 和 Codex 也不读这个目录。模型在 Devin 里调用 Skill 时传不了参数，所以第一次调用会返回 `INCOMPLETE` 并列出缺的输入，调用方再用 `run_subagent`（profile 选 `Explore`）把仓库、候选和契约写进任务重跑。
+
 ## Hook：只调用脚本
 
 检查逻辑只在 `design_integrity.py` 里维护一份，所有 harness 都读同一个脚本；hook 只负责在合适的时机调用它。Stop hook 是
