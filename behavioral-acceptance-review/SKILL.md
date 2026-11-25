@@ -1,12 +1,20 @@
 ---
 name: behavioral-acceptance-review
 description: Audit whether tests, evals, benchmarks, autoresearch tasks, generated artifacts, public APIs, or user-visible workflows provide independent behavioral evidence, including acceptance and release verdicts for model-driven Agent products. Use once the candidate is frozen (tests run, committed when the task allows it), before a long or costly run or a release relies on that evidence, when an acceptance surface changed, or when the user asks; not at every completion checkpoint, and not for drafts, ordinary implementation, or documentation-only changes.
-context: fork
-agent: Explore
-background: false
 ---
 
 # Behavioral Acceptance Review
+
+## Who reviews
+
+The reviewer is not the model that wrote the change. Run this review in a fresh, read-only
+context on a different model: a GPT model first, otherwise a model family other than the
+implementer's. Use what the current harness offers, such as a CLI (`codex exec --sandbox
+read-only`), a subagent or a new conversation with a model override, and pass only the inputs
+below plus the path to this file. No tool, agent profile, or model name is required. When no
+different model is reachable, run the review in a fresh context on the same model and put
+`same-model review` at the top of the report: it is a known limit, not a pass condition. When
+you received this file as the reviewer, together with the inputs, skip this section and review.
 
 Act as an acceptance auditor, not the implementation agent, test author, or general
 code reviewer. Review one frozen candidate snapshot in a fresh, read-only context. Do

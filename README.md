@@ -135,9 +135,11 @@ done
 [examples/acceptance-auditor.toml.example](examples/acceptance-auditor.toml.example) 复制到
 `~/.codex/agents/acceptance-auditor.toml`，只在本地填入私有模型路由。
 
-### Explore 配置（Devin）
+### 审查者怎么选
 
-两个审查 Skill 的 frontmatter 写的是 `agent: Explore`，指 Claude Code 内置的只读 Agent。Devin 没有同名配置，调用会报 `Unknown subagent profile 'Explore'`。在 Devin 里使用时（Devin CLI 3000.14 实测），把 [examples/devin-explore-agent.md](examples/devin-explore-agent.md) 链接或复制到 `~/.config/devin/agents/Explore.md`，给 Devin 补一个只读、能跑 shell 的同名配置；Skill 本身不用改，Claude Code 和 Codex 也不读这个目录。模型在 Devin 里调用 Skill 时传不了参数，所以第一次调用会返回 `INCOMPLETE` 并列出缺的输入，调用方再用 `run_subagent`（profile 选 `Explore`）把仓库、候选和契约写进任务重跑。
+两个审查 Skill 不绑定工具、Agent 配置或模型名。审查放在干净的只读上下文里，由不同于写代码那个模型的另一个模型来做：优先 GPT，没有就用和实现者不同家族的模型。具体用当前环境有的方式，例如 `codex exec --sandbox read-only`、带模型选择的子 Agent，或另开一个对话；只传仓库、候选和契约，加上 Skill 文件的路径，不传实现过程的聊天和理由。实在没有别的模型可用时，用同一模型在干净上下文里审，报告开头写明 `same-model review`，这是已知局限，不算通过条件。
+
+Devin 里需要一个只读、能跑 shell 的子 Agent 时，可以把 [examples/devin-explore-agent.md](examples/devin-explore-agent.md) 链接或复制到 `~/.config/devin/agents/Explore.md`（Devin CLI 3000.14 实测）；Skill 本身不再要求这个配置。
 
 ## Hook：只调用脚本
 

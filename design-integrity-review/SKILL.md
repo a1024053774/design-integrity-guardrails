@@ -1,15 +1,23 @@
 ---
 name: design-integrity-review
 description: Review one candidate change in a fresh, read-only context for structural shortcuts — swallowed or broad exception handling, fallback/retry paths, compatibility branches, parallel APIs, and patches that bypass root-cause ownership — judged against the task's goal and non-goals, and route acceptance-surface changes to behavioral-acceptance-review. Use once at a completion checkpoint; not for documentation-only, formatting-only, or routine test maintenance.
-context: fork
-agent: Explore
-background: false
 ---
 
 # Design Integrity Review
 
 A read-only, bounded structural review of one candidate change. Do not edit files, tests,
 commits, branches, or external systems while reviewing.
+
+## Who reviews
+
+The reviewer is not the model that wrote the change. Run this review in a fresh, read-only
+context on a different model: a GPT model first, otherwise a model family other than the
+implementer's. Use what the current harness offers, such as a CLI (`codex exec --sandbox
+read-only`), a subagent or a new conversation with a model override, and pass only the inputs
+below plus the path to this file. No tool, agent profile, or model name is required. When no
+different model is reachable, run the review in a fresh context on the same model and put
+`same-model review` at the top of the report: it is a known limit, not a pass condition. When
+you received this file as the reviewer, together with the inputs, skip this section and review.
 
 Review in a fresh context. The caller passes the repository path, the candidate (a commit, a
 patch, or the working tree with the revision it started from), and the task's goal, non-goals,
